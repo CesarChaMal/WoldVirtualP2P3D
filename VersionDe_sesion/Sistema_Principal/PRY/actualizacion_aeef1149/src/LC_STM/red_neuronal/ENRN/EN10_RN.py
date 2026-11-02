@@ -1,14 +1,38 @@
-import numpy as np
+"""
+NeuronaEntradaSigmoid V2 â€” refactorizaciÃ³n compatible para lucIA.
+
+Arquitectura conservada:
+    entrada -> (adaptaciÃ³n opcional) -> proyecciÃ³n densa XW+b -> Sigmoid -> salida
+
+CaracterÃ­sticas:
+- NumPy como Ãºnica dependencia matemÃ¡tica.
+- Mantiene NeuronaEntradaSigmoid y su interfaz pÃºblica principal.
+- Carga pesos del formato JSON legado.
+- NormalizaciÃ³n adaptativa affine opcional.
+- Feature gating opcional.
+- TransformaciÃ³n spline lineal por tramos opcional (misma dimensiÃ³n de entrada).
+- SGD, Momentum, Adam y AdamW.
+- BCE/MSE con derivadas coherentes.
+- Historiales acotados, callbacks, mÃ©tricas y checkpoint versionado.
+- No contiene un mÃ©todo llamado entrenar_paso.
+
+Nota:
+Las opciones adaptativas se pueden activar explÃ­citamente para preservar por defecto
+el comportamiento de modelos antiguos. No se cambia la topologÃ­a densa de la neurona.
+"""
+
+from __future__ import annotations
+
+import json
 import math
 import time
-import json
-from typing import Tuple, Optional, Dict, Any, List, Callable
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+import numpy as np
+
 try:
     from . import NeuronaEntradaBase, LUCIA_CONFIG
-except ImportError:
-    import numpy as _np_alias  # noqa: F401
-    from typing import Tuple as _Tuple, Dict as _Dict, Any as _Any
-
+except (ImportError, ValueError):
     LUCIA_CONFIG = {
         "precision": "float32",
         "random_seed": 42,
@@ -16,11 +40,12 @@ except ImportError:
     }
 
     class NeuronaEntradaBase:
-        """Base autocontenida (fallback sin ciclo de import)."""
+        """Fallback autocontenido cuando el paquete anfitriÃ³n no estÃ¡ disponible."""
 
-        def __init__(self, input_size: int, output_size: int, nombre: str = "NeuronaEntrada"):
-            self.input_size = input_size
-            self.output_size = output_size
+        def __init__(self, input_size: int, output_size: int,
+                     nombre: str = "NeuronaEntrada"):
+            self.input_size = int(input_size)
+            self.output_size = int(output_size)
             self.nombre = nombre
             self.pesos = None
             self.sesgo = None
@@ -34,13 +59,16 @@ except ImportError:
         def forward(self, entrada):
             raise NotImplementedError
 
-        def backward(self, g, e):
+        def backward(self, gradiente, entrada):
             raise NotImplementedError
 
         def obtener_estadisticas(self):
-            return {"nombre": self.nombre, "input_size": self.input_size,
-                    "output_size": self.output_size,
-                    "activaciones": len(self.historial_activaciones)}
+            return {
+                "nombre": self.nombre,
+                "input_size": self.input_size,
+                "output_size": self.output_size,
+                "activaciones": len(self.historial_activaciones),
+            }
 
         def obtener_estadisticas_completas(self):
             return self.obtener_estadisticas()
@@ -48,33 +76,62 @@ except ImportError:
         def verificar_estabilidad(self):
             return {"pesos_inicializados": self.pesos is not None}
 
-        def __str__(self) -> str:
-            return f"{self.nombre}(entrada={self.input_size}, salida={self.output_size})"
 
+# ---------------------------------------------------------------------------
+# Utilidades comunes
+# ---------------------------------------------------------------------------
 
-_DTYPE_MAP = {"float32": np.float32, "float64": np.float64, "float16": np.float16}
+_DTYPE_MAP = {
+    "float16": np.float16,
+    "float32": np.float32,
+    "float64": np.float64,
+}
 
 
 def _dtype() -> np.dtype:
-    return np.dtype(_DTYPE_MAP.get(LUCIA_CONFIG.get("precision", "float32"), np.float32))
+    nombre = str(LUCIA_CONFIG.get("precision", "float32")).lower()
+    return np.dtype(_DTYPE_MAP.get(nombre, np.float32))
 
 
-def _now() -> float:
+def _ahora() -> float:
     return time.perf_counter()
 
 
-class _RingBuffer:
+def _matriz(valor: Any, dtype=np.float64) -> np.ndarray:
+    """Convierte vectores/matrices a matriz 2D y rechaza dimensiones invÃ¡lidas."""
+    arr = np.asarray(valor, dtype=dtype)
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    if arr.ndim != 2:
+        raise ValueError("Se esperaba una entrada vectorial o matricial 2D.")
+    if not np.isfinite(arr).all():
+        raise ValueError("La entrada contiene NaN o valores infinitos.")
+    return arr
+
+
+class RingBuffer:
+    """Historial FIFO de capacidad fija."""
+
     def __init__(self, capacidad: int = 256):
+        if int(capacidad) < 1:
+            raise ValueError("La capacidad del historial debe ser >= 1.")
         self.capacidad = int(capacidad)
         self._datos: List[Any] = []
 
-    def append(self, item: Any) -> None:
-        self._datos.append(item)
-        if len(self._datos) > self.capacidad:
-            del self._datos[0:len(self._datos) - self.capacidad]
+    def append(self, elemento: Any) -> None:
+        self._datos.append(elemento)
+        exceso = len(self._datos) - self.capacidad
+        if exceso > 0:
+            del self._datos[:exceso]
 
     def __len__(self) -> int:
         return len(self._datos)
+
+    def __bool__(self) -> bool:
+        return bool(self._datos)
+
+    def ultimo(self) -> Any:
+        return self._datos[-1] if self._datos else None
 
     def to_list(self) -> List[Any]:
         return list(self._datos)
@@ -83,302 +140,887 @@ class _RingBuffer:
         self._datos.clear()
 
 
-class NeuronaEntradaSigmoid(NeuronaEntradaBase):
-    """EN10 Sigmoid eficiente: Xavier init, sigmoide estable, Adam/SGD."""
+# ---------------------------------------------------------------------------
+# AdaptaciÃ³n de entrada: normalizaciÃ³n aprendible inspirada en EDAIN
+# ---------------------------------------------------------------------------
 
-    def __init__(self, input_size: int, output_size: int,
-                 nombre: str = "NeuronaEntradaSigmoid",
-                 factor_escala: float = 1.0,
-                 umbral_sat_lo: float = 0.05,
-                 umbral_sat_hi: float = 0.95,
-                 fraccion_sat: float = 0.1,
-                 learning_rate: float = 0.001,
-                 optimizador: str = "adam",
-                 beta1: float = 0.9,
-                 beta2: float = 0.999,
-                 epsilon: float = 1e-8,
-                 weight_decay: float = 0.0,
-                 grad_clip: float = 5.0,
-                 lr_decay: float = 0.0,
-                 lr_min: float = 1e-6,
-                 usar_cache_forward: bool = True,
-                 semilla: Optional[int] = None,
-                 capacidad_historial: int = 256):
-        super().__init__(input_size, output_size, nombre)
-        self.factor_escala = float(factor_escala)
-        self.umbral_sat_lo = float(umbral_sat_lo)
-        self.umbral_sat_hi = float(umbral_sat_hi)
-        self.fraccion_sat = float(fraccion_sat)
-        self.varianza_real = 0.0
-        self.saturacion = False
-        self.ratio_sat = 0.0
-        self.lr_base = float(learning_rate or LUCIA_CONFIG.get("default_learning_rate", 0.001))
-        self.lr_actual = float(self.lr_base)
-        self.optimizador = str(optimizador).lower()
+class NormalizadorAdaptativo:
+    """
+    NormalizaciÃ³n por caracterÃ­stica con estadÃ­sticas mÃ³viles y transformaciÃ³n
+    affine aprendible. Mantiene la dimensiÃ³n de entrada.
+    """
+
+    def __init__(self, dimensiones: int, momentum: float = 0.05,
+                 epsilon: float = 1e-5):
+        self.dimensiones = int(dimensiones)
+        self.momentum = float(momentum)
+        self.epsilon = float(epsilon)
+        self.media = np.zeros((1, self.dimensiones), dtype=np.float64)
+        self.varianza = np.ones((1, self.dimensiones), dtype=np.float64)
+        self.escala = np.ones((1, self.dimensiones), dtype=np.float64)
+        self.desplazamiento = np.zeros((1, self.dimensiones), dtype=np.float64)
+        self.inicializado = False
+
+    def forward(self, x: np.ndarray, actualizar_stats: bool = False):
+        x = np.asarray(x, dtype=np.float64)
+        if x.shape[1] != self.dimensiones:
+            raise ValueError("DimensiÃ³n incompatible con el normalizador.")
+
+        if actualizar_stats and x.shape[0] > 1:
+            media_lote = np.mean(x, axis=0, keepdims=True)
+            var_lote = np.var(x, axis=0, keepdims=True)
+            if not self.inicializado:
+                self.media = media_lote.copy()
+                self.varianza = np.maximum(var_lote, self.epsilon)
+                self.inicializado = True
+            else:
+                m = self.momentum
+                self.media = (1.0 - m) * self.media + m * media_lote
+                self.varianza = (1.0 - m) * self.varianza + m * var_lote
+
+        z = (x - self.media) / np.sqrt(self.varianza + self.epsilon)
+        salida = z * self.escala + self.desplazamiento
+        cache = {"z": z}
+        return salida, cache
+
+    def backward(self, grad_salida: np.ndarray, cache: Dict[str, np.ndarray]):
+        z = cache["z"]
+        grad_escala = np.sum(grad_salida * z, axis=0, keepdims=True)
+        grad_desplazamiento = np.sum(grad_salida, axis=0, keepdims=True)
+        grad_entrada = (
+            grad_salida * self.escala /
+            np.sqrt(self.varianza + self.epsilon)
+        )
+        return grad_entrada, {
+            "norm_escala": grad_escala,
+            "norm_desplazamiento": grad_desplazamiento,
+        }
+
+    def estado(self) -> Dict[str, Any]:
+        return {
+            "media": self.media.tolist(),
+            "varianza": self.varianza.tolist(),
+            "escala": self.escala.tolist(),
+            "desplazamiento": self.desplazamiento.tolist(),
+            "inicializado": self.inicializado,
+        }
+
+    def cargar_estado(self, estado: Dict[str, Any]) -> None:
+        for clave in ("media", "varianza", "escala", "desplazamiento"):
+            if clave in estado:
+                valor = np.asarray(estado[clave], dtype=np.float64)
+                if valor.shape != (1, self.dimensiones):
+                    raise ValueError(f"Forma invÃ¡lida en normalizador: {clave}")
+                setattr(self, clave, valor)
+        self.inicializado = bool(estado.get("inicializado", True))
+
+
+# ---------------------------------------------------------------------------
+# PonderaciÃ³n dinÃ¡mica de caracterÃ­sticas
+# ---------------------------------------------------------------------------
+
+class CompuertaCaracteristicas:
+    """Gate sigmoidal por caracterÃ­stica; no altera la dimensiÃ³n del vector."""
+
+    def __init__(self, dimensiones: int):
+        self.logits = np.zeros((1, int(dimensiones)), dtype=np.float64)
+
+    def forward(self, x: np.ndarray):
+        gate = 1.0 / (1.0 + np.exp(-np.clip(self.logits, -30.0, 30.0)))
+        return x * gate, {"entrada": x, "gate": gate}
+
+    def backward(self, grad_salida: np.ndarray, cache: Dict[str, np.ndarray]):
+        gate = cache["gate"]
+        x = cache["entrada"]
+        grad_logits = np.sum(
+            grad_salida * x * gate * (1.0 - gate),
+            axis=0,
+            keepdims=True,
+        )
+        return grad_salida * gate, {"gate_logits": grad_logits}
+
+
+# ---------------------------------------------------------------------------
+# TransformaciÃ³n spline opcional, lineal por tramos
+# ---------------------------------------------------------------------------
+
+class TransformadorSpline:
+    """
+    TransformaciÃ³n unidimensional por caracterÃ­stica, lineal por tramos.
+    Cada caracterÃ­stica conserva su posiciÃ³n y la dimensiÃ³n total no cambia.
+    Es una aproximaciÃ³n ligera y opcional a una transformaciÃ³n basada en splines;
+    no implementa una capa KAN ni una expansiÃ³n de la matriz neuronal.
+    """
+
+    def __init__(self, dimensiones: int, n_nudos: int = 8,
+                 minimo: float = -3.0, maximo: float = 3.0):
+        if n_nudos < 2 or minimo >= maximo:
+            raise ValueError("ConfiguraciÃ³n spline invÃ¡lida.")
+        self.dimensiones = int(dimensiones)
+        self.n_nudos = int(n_nudos)
+        self.minimo = float(minimo)
+        self.maximo = float(maximo)
+        self.nudos = np.linspace(minimo, maximo, n_nudos, dtype=np.float64)
+        # Identidad inicial: la transformaciÃ³n comienza aproximadamente neutra.
+        self.valores = np.tile(self.nudos, (self.dimensiones, 1))
+        self._pendiente_extremos = True
+
+    def forward(self, x: np.ndarray):
+        x = np.asarray(x, dtype=np.float64)
+        salida = np.empty_like(x)
+        indices = np.empty(x.shape, dtype=np.int64)
+        fracciones = np.empty_like(x)
+        pendientes = np.empty_like(x)
+
+        for j in range(self.dimensiones):
+            idx = np.searchsorted(self.nudos, x[:, j], side="right") - 1
+            idx = np.clip(idx, 0, self.n_nudos - 2)
+            x0 = self.nudos[idx]
+            x1 = self.nudos[idx + 1]
+            y0 = self.valores[j, idx]
+            y1 = self.valores[j, idx + 1]
+            t = np.clip((x[:, j] - x0) / (x1 - x0), 0.0, 1.0)
+            pendiente = (y1 - y0) / (x1 - x0)
+            salida[:, j] = y0 + t * (y1 - y0)
+            indices[:, j] = idx
+            fracciones[:, j] = t
+            pendientes[:, j] = pendiente
+
+        return salida, {
+            "indices": indices,
+            "fracciones": fracciones,
+            "pendientes": pendientes,
+        }
+
+    def backward(self, grad_salida: np.ndarray, cache: Dict[str, np.ndarray]):
+        grad_entrada = grad_salida * cache["pendientes"]
+        grad_valores = np.zeros_like(self.valores)
+        idx = cache["indices"]
+        t = cache["fracciones"]
+
+        for j in range(self.dimensiones):
+            np.add.at(grad_valores[j], idx[:, j],
+                      grad_salida[:, j] * (1.0 - t[:, j]))
+            np.add.at(grad_valores[j], idx[:, j] + 1,
+                      grad_salida[:, j] * t[:, j])
+
+        return grad_entrada, {"spline_valores": grad_valores}
+
+    def estado(self) -> Dict[str, Any]:
+        return {"valores": self.valores.tolist()}
+
+    def cargar_estado(self, estado: Dict[str, Any]) -> None:
+        valores = np.asarray(estado["valores"], dtype=np.float64)
+        if valores.shape != self.valores.shape:
+            raise ValueError("Forma incompatible para parÃ¡metros spline.")
+        self.valores = valores
+
+
+# ---------------------------------------------------------------------------
+# Motor de optimizaciÃ³n independiente de la neurona
+# ---------------------------------------------------------------------------
+
+class MotorOptimizacion:
+    """SGD, Momentum, Adam y AdamW con estados independientes por parÃ¡metro."""
+
+    VALIDOS = {"sgd", "momentum", "sgd_momentum", "adam", "adamw"}
+
+    def __init__(self, nombre: str = "adam", beta1: float = 0.9,
+                 beta2: float = 0.999, epsilon: float = 1e-8,
+                 weight_decay: float = 0.0):
+        nombre = str(nombre).lower()
+        if nombre not in self.VALIDOS:
+            raise ValueError(
+                f"Optimizador '{nombre}' no vÃ¡lido. Opciones: {sorted(self.VALIDOS)}"
+            )
+        if not (0.0 <= beta1 < 1.0 and 0.0 <= beta2 < 1.0):
+            raise ValueError("beta1 y beta2 deben estar en [0, 1).")
+        if epsilon <= 0 or weight_decay < 0:
+            raise ValueError("epsilon debe ser positivo y weight_decay no negativo.")
+        self.nombre = nombre
         self.beta1 = float(beta1)
         self.beta2 = float(beta2)
         self.epsilon = float(epsilon)
         self.weight_decay = float(weight_decay)
-        self.grad_clip = float(grad_clip)
+        self.paso = 0
+        self.m: Dict[str, np.ndarray] = {}
+        self.v: Dict[str, np.ndarray] = {}
+
+    def actualizar(self, parametros: Dict[str, np.ndarray],
+                   gradientes: Dict[str, np.ndarray], lr: float) -> None:
+        self.paso += 1
+        for nombre, parametro in parametros.items():
+            grad = np.asarray(gradientes[nombre], dtype=np.float64)
+            if grad.shape != parametro.shape:
+                raise ValueError(f"Gradiente con forma incorrecta: {nombre}")
+            if not np.isfinite(grad).all():
+                raise FloatingPointError(f"Gradiente no finito: {nombre}")
+
+            p = parametro.astype(np.float64)
+            if self.nombre == "sgd":
+                nuevo = p - lr * grad
+            else:
+                if nombre not in self.m:
+                    self.m[nombre] = np.zeros_like(p)
+                    self.v[nombre] = np.zeros_like(p)
+
+                self.m[nombre] = (
+                    self.beta1 * self.m[nombre] + (1.0 - self.beta1) * grad
+                )
+
+                if self.nombre in {"momentum", "sgd_momentum"}:
+                    nuevo = p - lr * self.m[nombre]
+                else:
+                    self.v[nombre] = (
+                        self.beta2 * self.v[nombre] +
+                        (1.0 - self.beta2) * (grad * grad)
+                    )
+                    m_hat = self.m[nombre] / (1.0 - self.beta1 ** self.paso)
+                    v_hat = self.v[nombre] / (1.0 - self.beta2 ** self.paso)
+                    nuevo = p - lr * m_hat / (np.sqrt(v_hat) + self.epsilon)
+
+            if self.nombre == "adamw" and self.weight_decay > 0:
+                # Decaimiento desacoplado: no contamina los momentos.
+                if nombre in {"pesos", "spline_valores"}:
+                    nuevo = nuevo - lr * self.weight_decay * p
+
+            if not np.isfinite(nuevo).all():
+                raise FloatingPointError(f"ParÃ¡metro no finito tras actualizar: {nombre}")
+            parametro[...] = nuevo.astype(parametro.dtype, copy=False)
+
+    def estado(self) -> Dict[str, Any]:
+        return {
+            "nombre": self.nombre,
+            "beta1": self.beta1,
+            "beta2": self.beta2,
+            "epsilon": self.epsilon,
+            "weight_decay": self.weight_decay,
+            "paso": self.paso,
+            "m": {k: v.tolist() for k, v in self.m.items()},
+            "v": {k: v.tolist() for k, v in self.v.items()},
+        }
+
+    def cargar_estado(self, estado: Dict[str, Any]) -> None:
+        if estado.get("nombre", self.nombre) != self.nombre:
+            raise ValueError("El optimizador del checkpoint no coincide.")
+        self.paso = int(estado.get("paso", 0))
+        self.m = {k: np.asarray(v, dtype=np.float64)
+                  for k, v in estado.get("m", {}).items()}
+        self.v = {k: np.asarray(v, dtype=np.float64)
+                  for k, v in estado.get("v", {}).items()}
+
+
+# ---------------------------------------------------------------------------
+# Neurona principal: topologÃ­a densa + Sigmoid conservada
+# ---------------------------------------------------------------------------
+
+class NeuronaEntradaSigmoid(NeuronaEntradaBase):
+    """Neurona de entrada densa con activaciÃ³n Sigmoid y adaptaciÃ³n opcional."""
+
+    VERSION_FORMATO = 2
+
+    def __init__(
+        self,
+        input_size: int,
+        output_size: int,
+        nombre: str = "NeuronaEntradaSigmoid",
+        factor_escala: float = 1.0,
+        umbral_sat_lo: float = 0.05,
+        umbral_sat_hi: float = 0.95,
+        fraccion_sat: float = 0.1,
+        learning_rate: float = 0.001,
+        optimizador: str = "adam",
+        beta1: float = 0.9,
+        beta2: float = 0.999,
+        epsilon: float = 1e-8,
+        weight_decay: float = 0.0,
+        grad_clip: float = 5.0,
+        lr_decay: float = 0.0,
+        lr_min: float = 1e-6,
+        usar_cache_forward: bool = True,
+        semilla: Optional[int] = None,
+        capacidad_historial: int = 256,
+        usar_normalizacion_adaptativa: bool = False,
+        usar_feature_gating: bool = False,
+        usar_spline: bool = False,
+        spline_n_nudos: int = 8,
+        momentum_normalizador: float = 0.05,
+    ):
+        if int(input_size) < 1 or int(output_size) < 1:
+            raise ValueError("input_size y output_size deben ser positivos.")
+        if not (0.0 <= umbral_sat_lo < umbral_sat_hi <= 1.0):
+            raise ValueError("Umbrales de saturaciÃ³n invÃ¡lidos.")
+        if not (0.0 <= fraccion_sat <= 1.0):
+            raise ValueError("fraccion_sat debe estar entre 0 y 1.")
+        if learning_rate <= 0 or lr_min <= 0 or grad_clip < 0:
+            raise ValueError("Tasas de aprendizaje y grad_clip invÃ¡lidos.")
+
+        super().__init__(int(input_size), int(output_size), nombre)
+        self.factor_escala = float(factor_escala)
+        self.umbral_sat_lo = float(umbral_sat_lo)
+        self.umbral_sat_hi = float(umbral_sat_hi)
+        self.fraccion_sat = float(fraccion_sat)
+
+        self.lr_base = float(learning_rate or LUCIA_CONFIG.get(
+            "default_learning_rate", 0.001
+        ))
+        self.lr_actual = self.lr_base
         self.lr_decay = float(lr_decay)
         self.lr_min = float(lr_min)
+        self.grad_clip = float(grad_clip)
+        self.weight_decay = float(weight_decay)
         self.usar_cache_forward = bool(usar_cache_forward)
-        self.semilla = semilla if semilla is not None else int(LUCIA_CONFIG.get("random_seed", 42))
+
+        self.semilla = int(
+            semilla if semilla is not None
+            else LUCIA_CONFIG.get("random_seed", 42)
+        )
         self.rng = np.random.default_rng(self.semilla)
-        self._m_pesos: Optional[np.ndarray] = None
-        self._v_pesos: Optional[np.ndarray] = None
-        self._m_sesgo: Optional[np.ndarray] = None
-        self._v_sesgo: Optional[np.ndarray] = None
-        self._paso = 0
+
+        self.optimizador = str(optimizador).lower()
+        self.motor_optimizacion = MotorOptimizacion(
+            self.optimizador, beta1, beta2, epsilon, weight_decay
+        )
+
+        self.usar_normalizacion_adaptativa = bool(usar_normalizacion_adaptativa)
+        self.usar_feature_gating = bool(usar_feature_gating)
+        self.usar_spline = bool(usar_spline)
+
+        self.normalizador = NormalizadorAdaptativo(
+            self.input_size, momentum=momentum_normalizador
+        )
+        self.comp_puerta = (
+            CompuertaCaracteristicas(self.input_size)
+            if self.usar_feature_gating else None
+        )
+        self.transformador_spline = (
+            TransformadorSpline(self.input_size, n_nudos=spline_n_nudos)
+            if self.usar_spline else None
+        )
+
+        self.pesos: Optional[np.ndarray] = None
+        self.sesgo: Optional[np.ndarray] = None
         self._cache: Dict[str, Any] = {}
-        self.historial_activaciones = _RingBuffer(capacidad_historial)
-        self.historial_gradientes = _RingBuffer(capacidad_historial)
-        self.historial_loss: List[float] = []
-        self.historial_lr: List[float] = []
+        self.historial_activaciones = RingBuffer(capacidad_historial)
+        self.historial_gradientes = RingBuffer(capacidad_historial)
+        self.historial_loss = RingBuffer(capacidad_historial)
+        self.historial_lr = RingBuffer(capacidad_historial)
+
+        self.varianza_real = 0.0
+        self.saturacion = False
+        self.ratio_sat = 0.0
+        self.mejor_loss = float("inf")
         self.contador_forward = 0
         self.contador_backward = 0
         self.tiempo_forward_acum = 0.0
         self.tiempo_backward_acum = 0.0
-        self.mejor_loss = float("inf")
         self.callbacks: List[Callable[[str, Dict[str, Any]], None]] = []
+        self._ultimo_lote_entrenamiento = False
 
-    def _emit(self, evento: str, info: Optional[Dict[str, Any]] = None) -> None:
-        for cb in self.callbacks:
-            try:
-                cb(evento, info or {})
-            except Exception:
-                continue
-
-    def registrar_callback(self, fn: Callable[[str, Dict[str, Any]], None]) -> None:
-        self.callbacks.append(fn)
-
-    def _asegurar_adam(self) -> None:
-        if self._m_pesos is None:
-            assert self.pesos is not None and self.sesgo is not None
-            self._m_pesos = np.zeros_like(self.pesos, dtype=np.float64)
-            self._v_pesos = np.zeros_like(self.pesos, dtype=np.float64)
-            self._m_sesgo = np.zeros_like(self.sesgo, dtype=np.float64)
-            self._v_sesgo = np.zeros_like(self.sesgo, dtype=np.float64)
-
-    def _decaer_lr(self) -> None:
-        if self.lr_decay > 0.0:
-            self.lr_actual = max(self.lr_min, self.lr_base / (1.0 + self.lr_decay * self._paso))
-        self.historial_lr.append(self.lr_actual)
-
-    def _clip(self, g: np.ndarray) -> np.ndarray:
-        if self.grad_clip and self.grad_clip > 0:
-            n = float(np.linalg.norm(g))
-            if n > self.grad_clip:
-                g = g * (self.grad_clip / (n + 1e-12))
-        return g
-
-    def _preparar(self, entrada: np.ndarray) -> np.ndarray:
-        x = np.asarray(entrada, dtype=_dtype())
-        if x.ndim == 1:
-            x = x.reshape(1, -1)
-        if x.shape[1] != self.input_size:
-            raise ValueError(f"entrada dim {x.shape[1]} != input_size {self.input_size}")
-        return np.ascontiguousarray(x, dtype=_dtype())
+    # -------------------------- InicializaciÃ³n --------------------------
 
     def inicializar_pesos(self, modo: str = "xavier") -> None:
-        dt = _dtype()
         modo = str(modo).lower()
+        dt = _dtype()
         if modo == "xavier":
-            lim = math.sqrt(6.0 / (self.input_size + self.output_size)) * self.factor_escala
-            self.pesos = self.rng.uniform(-lim, lim, (self.input_size, self.output_size)).astype(dt)
+            limite = math.sqrt(6.0 / (self.input_size + self.output_size))
+            limite *= self.factor_escala
+            self.pesos = self.rng.uniform(
+                -limite, limite, (self.input_size, self.output_size)
+            ).astype(dt)
         elif modo == "he":
             std = math.sqrt(2.0 / self.input_size) * self.factor_escala
-            self.pesos = self.rng.normal(0, std, (self.input_size, self.output_size)).astype(dt)
+            self.pesos = self.rng.normal(
+                0.0, std, (self.input_size, self.output_size)
+            ).astype(dt)
         else:
-            raise ValueError(f"modo {modo} desconocido")
+            raise ValueError(f"Modo de inicializaciÃ³n desconocido: {modo}")
+
         self.sesgo = np.zeros((1, self.output_size), dtype=dt)
         self.varianza_real = float(np.var(self.pesos))
-        self.saturacion = False
-        self._m_pesos = self._v_pesos = self._m_sesgo = self._v_sesgo = None
-        self._paso = 0
-        self._emit("init", {"modo": modo})
+        self.motor_optimizacion = MotorOptimizacion(
+            self.optimizador,
+            self.motor_optimizacion.beta1,
+            self.motor_optimizacion.beta2,
+            self.motor_optimizacion.epsilon,
+            self.weight_decay,
+        )
+        self._cache.clear()
+        self._emitir("inicializacion", {"modo": modo})
 
-    def _sigmoid(self, x: np.ndarray) -> np.ndarray:
-        return (1.0 / (1.0 + np.exp(-np.clip(x.astype(np.float64), -30, 30)))).astype(_dtype())
-
-    def forward(self, entrada: np.ndarray) -> np.ndarray:
-        t0 = _now()
-        if self.pesos is None:
+    def _asegurar_pesos(self) -> None:
+        if self.pesos is None or self.sesgo is None:
             self.inicializar_pesos()
-        assert self.pesos is not None and self.sesgo is not None
-        x = self._preparar(entrada)
-        salida = self._sigmoid(np.dot(x, self.pesos) + self.sesgo)
+
+    # -------------------------- Entrada y activaciÃ³n -------------------
+
+    def _preparar(self, entrada: Any) -> np.ndarray:
+        x = _matriz(entrada, dtype=_dtype())
+        if x.shape[1] != self.input_size:
+            raise ValueError(
+                f"DimensiÃ³n de entrada {x.shape[1]} != input_size {self.input_size}"
+            )
+        return np.ascontiguousarray(x, dtype=_dtype())
+
+    @staticmethod
+    def _sigmoid(x: np.ndarray) -> np.ndarray:
+        # ImplementaciÃ³n estable por ramas para evitar overflow.
+        x64 = np.asarray(x, dtype=np.float64)
+        salida = np.empty_like(x64)
+        positivos = x64 >= 0
+        salida[positivos] = 1.0 / (1.0 + np.exp(-x64[positivos]))
+        exp_x = np.exp(x64[~positivos])
+        salida[~positivos] = exp_x / (1.0 + exp_x)
+        return salida.astype(_dtype())
+
+    def procesar_entrada(self, entrada: Any,
+                         actualizar_estadisticas: bool = False) -> np.ndarray:
+        """Interfaz descriptiva equivalente al forward pÃºblico."""
+        return self.forward(
+            entrada, actualizar_estadisticas=actualizar_estadisticas
+        )
+
+    def forward(self, entrada: Any,
+                actualizar_estadisticas: bool = False) -> np.ndarray:
+        t0 = _ahora()
+        self._asegurar_pesos()
+        x_original = self._preparar(entrada).astype(np.float64)
+        x = x_original
+        cache: Dict[str, Any] = {"x_original": x_original}
+
+        if self.usar_normalizacion_adaptativa:
+            x, cache["normalizador"] = self.normalizador.forward(
+                x, actualizar_stats=actualizar_estadisticas
+            )
+        if self.transformador_spline is not None:
+            x, cache["spline"] = self.transformador_spline.forward(x)
+        if self.comp_puerta is not None:
+            x, cache["gate"] = self.comp_puerta.forward(x)
+
+        z = np.dot(x, self.pesos.astype(np.float64)) + self.sesgo.astype(np.float64)
+        salida = self._sigmoid(z)
         salida = np.ascontiguousarray(salida, dtype=_dtype())
-        ratio = float(np.sum((salida < self.umbral_sat_lo) | (salida > self.umbral_sat_hi))) / max(1, salida.size)
-        self.ratio_sat = 0.9 * self.ratio_sat + 0.1 * ratio if self.historial_activaciones else ratio
+
+        ratio = float(np.mean(
+            (salida < self.umbral_sat_lo) | (salida > self.umbral_sat_hi)
+        )) if salida.size else 0.0
+        self.ratio_sat = (
+            0.9 * self.ratio_sat + 0.1 * ratio
+            if self.contador_forward else ratio
+        )
         self.saturacion = bool(self.ratio_sat > self.fraccion_sat)
-        v = float(np.var(salida)) if salida.size else 0.0
-        self.varianza_real = 0.9 * self.varianza_real + 0.1 * v if len(self.historial_activaciones) else v
-        self.historial_activaciones.append(salida.copy())
+        var_salida = float(np.var(salida)) if salida.size else 0.0
+        self.varianza_real = (
+            0.9 * self.varianza_real + 0.1 * var_salida
+            if self.contador_forward else var_salida
+        )
+
+        cache.update({"x_proyectada": x, "z": z, "salida": salida})
         if self.usar_cache_forward:
-            self._cache = {"x": x, "s": salida}
+            self._cache = cache
+
+        self.historial_activaciones.append(salida.copy())
         self.contador_forward += 1
-        self.tiempo_forward_acum += _now() - t0
+        self.tiempo_forward_acum += _ahora() - t0
         return salida
 
-    def forward_batch(self, lote: List[np.ndarray]) -> List[np.ndarray]:
-        return [self.forward(x) for x in lote]
+    def forward_batch(self, lote: Any) -> np.ndarray:
+        """Procesa un lote en una sola operaciÃ³n vectorizada."""
+        return self.forward(lote)
 
-    def backward(self, gradiente_salida: np.ndarray, entrada: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
-        t0 = _now()
-        g = np.asarray(gradiente_salida, dtype=np.float64)
-        if g.ndim == 1:
-            g = g.reshape(1, -1)
-        s = None
-        if entrada is None and "s" in self._cache:
-            s = np.asarray(self._cache["s"], dtype=np.float64)
-        elif self.historial_activaciones.to_list():
-            s = np.asarray(self.historial_activaciones.to_list()[-1], dtype=np.float64)
-        if s is not None and s.shape == g.shape:
-            g = g * s * (1.0 - s)
-        x = self._preparar(entrada) if entrada is not None else self._cache.get("x")
-        if x is None:
-            raise ValueError("sin entrada ni cache forward")
-        b = max(1, x.shape[0])
-        gp = self._clip(np.asarray(np.dot(x.T.astype(np.float64), g) / b))
-        gb = self._clip(np.asarray(np.sum(g, axis=0, keepdims=True) / b))
-        if self.weight_decay > 0.0 and self.pesos is not None:
-            gp = gp + self.weight_decay * self.pesos.astype(np.float64)
-        self.historial_gradientes.append({'pesos': np.asarray(gp, dtype=_dtype()).copy(),
-                                          'sesgo': np.asarray(gb, dtype=_dtype()).copy(),
-                                          'norma_pesos': float(np.linalg.norm(gp)),
-                                          'norma_sesgo': float(np.linalg.norm(gb))})
+    # -------------------------- RetropropagaciÃ³n -----------------------
+
+    def calcular_gradientes(self, gradiente_salida: Any,
+                            entrada: Optional[Any] = None,
+                            cache: Optional[Dict[str, Any]] = None):
+        """Calcula gradientes sin actualizar parÃ¡metros; devuelve gradientes y dL/dx."""
+        t0 = _ahora()
+        self._asegurar_pesos()
+        c = cache if cache is not None else self._cache
+        if not c:
+            raise RuntimeError(
+                "No existe cachÃ© de forward. Ejecuta forward antes de backward."
+            )
+
+        g = _matriz(gradiente_salida, dtype=np.float64)
+        salida = np.asarray(c["salida"], dtype=np.float64)
+        if g.shape != salida.shape:
+            raise ValueError(
+                f"Gradiente de salida {g.shape} incompatible con salida {salida.shape}"
+            )
+
+        # El gradiente recibido es dL/d(salida); aquÃ­ se aplica la derivada Sigmoid.
+        delta = g * salida * (1.0 - salida)
+        x = np.asarray(c["x_proyectada"], dtype=np.float64)
+        n = max(1, x.shape[0])
+        grad_pesos = np.dot(x.T, delta) / n
+        grad_sesgo = np.sum(delta, axis=0, keepdims=True) / n
+
+        grad_x = np.dot(delta, self.pesos.astype(np.float64).T)
+        grads_extra: Dict[str, np.ndarray] = {}
+
+        if self.comp_puerta is not None and "gate" in c:
+            grad_x, extra = self.comp_puerta.backward(grad_x, c["gate"])
+            grads_extra.update(extra)
+        if self.transformador_spline is not None and "spline" in c:
+            grad_x, extra = self.transformador_spline.backward(
+                grad_x, c["spline"]
+            )
+            grads_extra.update(extra)
+        if self.usar_normalizacion_adaptativa and "normalizador" in c:
+            grad_x, extra = self.normalizador.backward(
+                grad_x, c["normalizador"]
+            )
+            grads_extra.update(extra)
+
+        gradientes = {
+            "pesos": grad_pesos,
+            "sesgo": grad_sesgo,
+            **{k: v / n for k, v in grads_extra.items()},
+        }
+        if self.grad_clip > 0:
+            norma = math.sqrt(sum(float(np.sum(v * v)) for v in gradientes.values()))
+            if norma > self.grad_clip:
+                factor = self.grad_clip / (norma + 1e-12)
+                gradientes = {k: v * factor for k, v in gradientes.items()}
+
+        self.historial_gradientes.append({
+            k: np.asarray(v).copy() for k, v in gradientes.items()
+        })
         self.contador_backward += 1
-        self.tiempo_backward_acum += _now() - t0
-        return np.asarray(gp, dtype=_dtype()), np.asarray(gb, dtype=_dtype())
+        self.tiempo_backward_acum += _ahora() - t0
+        return gradientes, grad_x
 
-    def grad_entrada(self, gradiente_salida: np.ndarray) -> np.ndarray:
-        g = np.asarray(gradiente_salida, dtype=np.float64)
-        if g.ndim == 1:
-            g = g.reshape(1, -1)
-        assert self.pesos is not None
-        return np.dot(g, self.pesos.T.astype(np.float64)).astype(_dtype())
+    def backward(self, gradiente_salida: Any,
+                 entrada: Optional[Any] = None) -> Tuple[np.ndarray, np.ndarray]:
+        """Compatibilidad con la interfaz antigua: devuelve grad_pesos, grad_sesgo."""
+        if entrada is not None:
+            # Se reconstruye un forward explÃ­cito para garantizar que la cachÃ©
+            # corresponde a la entrada entregada, sin recuperar activaciones antiguas.
+            self.forward(entrada)
+        gradientes, _ = self.calcular_gradientes(gradiente_salida)
+        return (
+            np.asarray(gradientes["pesos"], dtype=_dtype()),
+            np.asarray(gradientes["sesgo"], dtype=_dtype()),
+        )
 
-    def paso_optimizador(self, grad_pesos: np.ndarray, grad_sesgo: np.ndarray) -> Dict[str, float]:
-        if self.pesos is None or self.sesgo is None:
-            raise RuntimeError("pesos no inicializados")
-        self._paso += 1
-        self._decaer_lr()
-        gp = np.asarray(grad_pesos, dtype=np.float64)
-        gb = np.asarray(grad_sesgo, dtype=np.float64)
-        if self.optimizador == "sgd":
-            self.pesos = (self.pesos.astype(np.float64) - self.lr_actual * gp).astype(_dtype())
-            self.sesgo = (self.sesgo.astype(np.float64) - self.lr_actual * gb).astype(_dtype())
-        elif self.optimizador == "sgd_momentum":
-            self._asegurar_adam()
-            assert self._m_pesos is not None and self._m_sesgo is not None
-            self._m_pesos[:] = self.beta1 * self._m_pesos + (1 - self.beta1) * gp
-            self._m_sesgo[:] = self.beta1 * self._m_sesgo + (1 - self.beta1) * gb
-            self.pesos = (self.pesos.astype(np.float64) - self.lr_actual * self._m_pesos).astype(_dtype())
-            self.sesgo = (self.sesgo.astype(np.float64) - self.lr_actual * self._m_sesgo).astype(_dtype())
-        else:
-            self._asegurar_adam()
-            assert self._m_pesos is not None and self._v_pesos is not None
-            assert self._m_sesgo is not None and self._v_sesgo is not None
-            self._m_pesos[:] = self.beta1 * self._m_pesos + (1 - self.beta1) * gp
-            self._v_pesos[:] = self.beta2 * self._v_pesos + (1 - self.beta2) * (gp * gp)
-            self._m_sesgo[:] = self.beta1 * self._m_sesgo + (1 - self.beta1) * gb
-            self._v_sesgo[:] = self.beta2 * self._v_sesgo + (1 - self.beta2) * (gb * gb)
-            mh_p = self._m_pesos / (1 - self.beta1 ** self._paso)
-            vh_p = self._v_pesos / (1 - self.beta2 ** self._paso)
-            mh_b = self._m_sesgo / (1 - self.beta1 ** self._paso)
-            vh_b = self._v_sesgo / (1 - self.beta2 ** self._paso)
-            self.pesos = (self.pesos.astype(np.float64) - self.lr_actual * mh_p / (np.sqrt(vh_p) + self.epsilon)).astype(_dtype())
-            self.sesgo = (self.sesgo.astype(np.float64) - self.lr_actual * mh_b / (np.sqrt(vh_b) + self.epsilon)).astype(_dtype())
-        info = {"lr": self.lr_actual, "paso": float(self._paso)}
-        self._emit("paso", info)
+    def grad_entrada(self, gradiente_salida: Any) -> np.ndarray:
+        """Gradiente respecto a la entrada original, usando la cachÃ© mÃ¡s reciente."""
+        _, grad_x = self.calcular_gradientes(gradiente_salida)
+        return np.asarray(grad_x, dtype=_dtype())
+
+    # -------------------------- OptimizaciÃ³n ---------------------------
+
+    def _parametros_entrenables(self) -> Dict[str, np.ndarray]:
+        self._asegurar_pesos()
+        parametros = {"pesos": self.pesos, "sesgo": self.sesgo}
+        if self.usar_normalizacion_adaptativa:
+            parametros["norm_escala"] = self.normalizador.escala
+            parametros["norm_desplazamiento"] = self.normalizador.desplazamiento
+        if self.comp_puerta is not None:
+            parametros["gate_logits"] = self.comp_puerta.logits
+        if self.transformador_spline is not None:
+            parametros["spline_valores"] = self.transformador_spline.valores
+        return parametros
+
+    def aplicar_optimizacion(self, gradientes: Dict[str, np.ndarray]) -> Dict[str, float]:
+        """Actualiza parÃ¡metros mediante el optimizador configurado."""
+        if self.lr_decay > 0:
+            self.lr_actual = max(
+                self.lr_min,
+                self.lr_base / (1.0 + self.lr_decay *
+                                (self.motor_optimizacion.paso + 1))
+            )
+        parametros = self._parametros_entrenables()
+        faltantes = set(parametros) - set(gradientes)
+        if faltantes:
+            raise ValueError(f"Faltan gradientes para: {sorted(faltantes)}")
+        grads = {k: np.asarray(gradientes[k], dtype=np.float64)
+                 for k in parametros}
+        if self.weight_decay > 0 and self.optimizador != "adamw":
+            # RegularizaciÃ³n L2 acoplada para SGD/Momentum/Adam.
+            grads["pesos"] = grads["pesos"] + self.weight_decay * self.pesos
+        self.motor_optimizacion.actualizar(parametros, grads, self.lr_actual)
+        self.historial_lr.append(self.lr_actual)
+        info = {
+            "lr": float(self.lr_actual),
+            "paso": float(self.motor_optimizacion.paso),
+        }
+        self._emitir("optimizacion", info)
         return info
 
-    def entrenar_paso(self, entrada: np.ndarray, objetivo: np.ndarray, bce: bool = False) -> Dict[str, float]:
-        pred = self.forward(entrada).astype(np.float64)
-        y = np.asarray(objetivo, dtype=np.float64)
-        if y.ndim == 1:
-            y = y.reshape(1, -1)
-        y = np.clip(y, 1e-6, 1 - 1e-6)
-        if bce:
-            loss = float(-np.mean(y * np.log(pred + 1e-9) + (1 - y) * np.log(1 - pred + 1e-9)))
-            err = (pred - y) / max(1, pred.shape[0]) / (np.clip(pred * (1 - pred), 1e-6, None))
-            err = np.clip(err, -5, 5)
+    def evaluar_y_ajustar(self, entrada: Any, objetivo: Any,
+                          funcion_perdida: str = "mse") -> Dict[str, float]:
+        """EvalÃºa un lote, calcula gradientes y aplica una actualizaciÃ³n."""
+        perdida_tipo = str(funcion_perdida).lower()
+        if perdida_tipo not in {"mse", "bce"}:
+            raise ValueError("funcion_perdida debe ser 'mse' o 'bce'.")
+
+        pred = self.forward(entrada, actualizar_estadisticas=True).astype(np.float64)
+        y = _matriz(objetivo, dtype=np.float64)
+        if y.shape != pred.shape:
+            raise ValueError(f"Objetivo {y.shape} incompatible con salida {pred.shape}")
+        if np.any(y < 0) or np.any(y > 1):
+            raise ValueError("Los objetivos sigmoidales deben estar en [0, 1].")
+
+        eps = 1e-7
+        p = np.clip(pred, eps, 1.0 - eps)
+        if perdida_tipo == "bce":
+            loss = float(-np.mean(y * np.log(p) + (1.0 - y) * np.log(1.0 - p)))
+            # Para BCE + sigmoid: dL/dz = (p-y)/N.
+            # Se evita aplicar otra vez sigmoid'(z) en calcular_gradientes.
+            grad_logits = (p - y) / max(1, p.shape[1])
+            gradientes = self._gradientes_desde_delta(grad_logits)
         else:
             loss = float(np.mean((pred - y) ** 2))
-            err = (pred - y) / max(1, pred.shape[0])
-        gp, gb = self.backward(err.astype(_dtype()), entrada)
-        opt = self.paso_optimizador(gp, gb)
-        self.historial_loss.append(loss)
-        if loss < self.mejor_loss:
-            self.mejor_loss = loss
-        return {"loss": loss, **opt}
+            grad_salida = 2.0 * (pred - y) / max(1, pred.shape[1])
+            gradientes, _ = self.calcular_gradientes(grad_salida)
 
-    def desaturar(self, factor: float = 0.9) -> None:
+        info_opt = self.aplicar_optimizacion(gradientes)
+        self.historial_loss.append(loss)
+        self.mejor_loss = min(self.mejor_loss, loss)
+        return {"loss": loss, **info_opt}
+
+    def _gradientes_desde_delta(self, delta: np.ndarray):
+        """Ruta BCE estable: recibe directamente dL/dz, sin derivar Sigmoid otra vez."""
+        c = self._cache
+        x = np.asarray(c["x_proyectada"], dtype=np.float64)
+        n = max(1, x.shape[0])
+        grad_pesos = np.dot(x.T, delta)
+        grad_sesgo = np.sum(delta, axis=0, keepdims=True)
+        grad_x = np.dot(delta, self.pesos.astype(np.float64).T)
+        extra: Dict[str, np.ndarray] = {}
+
+        if self.comp_puerta is not None and "gate" in c:
+            grad_x, g = self.comp_puerta.backward(grad_x, c["gate"])
+            extra.update(g)
+        if self.transformador_spline is not None and "spline" in c:
+            grad_x, g = self.transformador_spline.backward(grad_x, c["spline"])
+            extra.update(g)
+        if self.usar_normalizacion_adaptativa and "normalizador" in c:
+            grad_x, g = self.normalizador.backward(grad_x, c["normalizador"])
+            extra.update(g)
+
+        grads = {
+            "pesos": grad_pesos / n,
+            "sesgo": grad_sesgo / n,
+            **{k: v / n for k, v in extra.items()},
+        }
+        if self.grad_clip > 0:
+            norma = math.sqrt(sum(float(np.sum(v * v)) for v in grads.values()))
+            if norma > self.grad_clip:
+                factor = self.grad_clip / (norma + 1e-12)
+                grads = {k: v * factor for k, v in grads.items()}
+        self.historial_gradientes.append({
+            k: np.asarray(v).copy() for k, v in grads.items()
+        })
+        self.contador_backward += 1
+        return grads
+
+    # -------------------------- SupervisiÃ³n ----------------------------
+
+    def corregir_saturacion(self, factor: float = 0.9) -> bool:
+        """IntervenciÃ³n explÃ­cita y conservadora; no se ejecuta automÃ¡ticamente."""
+        if not (0.0 < factor < 1.0):
+            raise ValueError("factor debe estar entre 0 y 1.")
         if self.pesos is not None and self.saturacion:
-            self.pesos = (self.pesos.astype(np.float64) * factor).astype(_dtype())
+            self.pesos[...] = (self.pesos.astype(np.float64) * factor).astype(
+                self.pesos.dtype
+            )
+            return True
+        return False
+
+    def registrar_callback(self, funcion: Callable[[str, Dict[str, Any]], None]):
+        if not callable(funcion):
+            raise TypeError("El callback debe ser invocable.")
+        self.callbacks.append(funcion)
+
+    def _emitir(self, evento: str, info: Optional[Dict[str, Any]] = None):
+        for callback in tuple(self.callbacks):
+            try:
+                callback(evento, dict(info or {}))
+            except Exception:
+                # Un callback externo no debe interrumpir el cÃ¡lculo neuronal.
+                continue
 
     def obtener_estadisticas(self) -> Dict[str, Any]:
-        return {"nombre": self.nombre, "input_size": self.input_size,
-                "output_size": self.output_size,
-                "activaciones": len(self.historial_activaciones),
-                "forwards": self.contador_forward, "backwards": self.contador_backward,
-                "lr_actual": self.lr_actual, "paso": self._paso, "optimizador": self.optimizador}
+        return {
+            "nombre": self.nombre,
+            "input_size": self.input_size,
+            "output_size": self.output_size,
+            "activaciones": len(self.historial_activaciones),
+            "forwards": self.contador_forward,
+            "backwards": self.contador_backward,
+            "lr_actual": self.lr_actual,
+            "paso": self.motor_optimizacion.paso,
+            "optimizador": self.optimizador,
+            "normalizacion_adaptativa": self.usar_normalizacion_adaptativa,
+            "feature_gating": self.usar_feature_gating,
+            "spline": self.usar_spline,
+        }
 
     def obtener_estadisticas_completas(self) -> Dict[str, Any]:
         stats = self.obtener_estadisticas()
-        stats.update({'varianza_real': self.varianza_real, 'saturacion': self.saturacion,
-                      'ratio_sat': self.ratio_sat, 'mejor_loss': self.mejor_loss,
-                      'ultima_loss': self.historial_loss[-1] if self.historial_loss else None,
-                      't_medio_forward_ms': (self.tiempo_forward_acum / max(1, self.contador_forward)) * 1000.0,
-                      't_medio_backward_ms': (self.tiempo_backward_acum / max(1, self.contador_backward)) * 1000.0})
+        stats.update({
+            "varianza_real": self.varianza_real,
+            "saturacion": self.saturacion,
+            "ratio_sat": self.ratio_sat,
+            "mejor_loss": self.mejor_loss,
+            "ultima_loss": self.historial_loss.ultimo(),
+            "t_medio_forward_ms": (
+                self.tiempo_forward_acum / max(1, self.contador_forward)
+            ) * 1000.0,
+            "t_medio_backward_ms": (
+                self.tiempo_backward_acum / max(1, self.contador_backward)
+            ) * 1000.0,
+        })
         return stats
 
     def verificar_estabilidad(self) -> Dict[str, bool]:
-        est = {'pesos_inicializados': self.pesos is not None, 'sesgo_inicializado': self.sesgo is not None}
+        resultado = {
+            "pesos_inicializados": self.pesos is not None,
+            "sesgo_inicializado": self.sesgo is not None,
+            "sin_saturacion": not self.saturacion,
+        }
         if self.pesos is not None:
-            pmax = float(np.max(np.abs(self.pesos)))
-            pmin = max(float(np.min(np.abs(self.pesos))), 1e-12)
-            est['pesos_no_explosivos'] = pmax < 3.0
-            est['pesos_no_desaparecen'] = pmin > 1e-6
-            est['pesos_balanceados'] = pmax / pmin < 100.0 if pmin > 0 else True
-            est['sin_saturacion'] = not self.saturacion
-            est['sin_nan'] = bool(not np.isnan(self.pesos).any())
-        return est
+            resultado.update({
+                "pesos_finitos": bool(np.isfinite(self.pesos).all()),
+                "sesgo_finito": bool(
+                    self.sesgo is not None and np.isfinite(self.sesgo).all()
+                ),
+                "pesos_no_explosivos": bool(
+                    np.max(np.abs(self.pesos)) < 3.0
+                ),
+            })
+        if self.historial_loss:
+            resultado["perdida_finita"] = bool(
+                np.isfinite(self.historial_loss.ultimo())
+            )
+        return resultado
 
-    def resumen_rendimiento(self) -> Dict[str, Any]:
-        return {"forwards": self.contador_forward, "backwards": self.contador_backward,
-                "t_forward_total_s": self.tiempo_forward_acum, "t_backward_total_s": self.tiempo_backward_acum}
+    def resumen_rendimiento(self) -> Dict[str, float]:
+        return {
+            "forwards": self.contador_forward,
+            "backwards": self.contador_backward,
+            "t_forward_total_s": self.tiempo_forward_acum,
+            "t_backward_total_s": self.tiempo_backward_acum,
+        }
 
     def reiniciar_metricas(self) -> None:
         self.historial_activaciones.clear()
         self.historial_gradientes.clear()
         self.historial_loss.clear()
+        self.historial_lr.clear()
         self.contador_forward = 0
         self.contador_backward = 0
         self.tiempo_forward_acum = 0.0
         self.tiempo_backward_acum = 0.0
 
-    def a_dict(self) -> Dict[str, Any]:
-        return {"input_size": self.input_size, "output_size": self.output_size,
-                "nombre": self.nombre, "factor_escala": self.factor_escala,
-                "lr_base": self.lr_base, "optimizador": self.optimizador,
-                "pesos": self.pesos.tolist() if self.pesos is not None else None,
-                "sesgo": self.sesgo.tolist() if self.sesgo is not None else None}
+    # -------------------------- Persistencia ---------------------------
 
-    def guardar(self, ruta: str) -> None:
-        with open(ruta, "w", encoding="utf-8") as f:
-            json.dump(self.a_dict(), f)
+    def a_dict(self, incluir_estado_entrenamiento: bool = True) -> Dict[str, Any]:
+        datos = {
+            "formato_version": self.VERSION_FORMATO,
+            "input_size": self.input_size,
+            "output_size": self.output_size,
+            "nombre": self.nombre,
+            "factor_escala": self.factor_escala,
+            "lr_base": self.lr_base,
+            "lr_actual": self.lr_actual,
+            "optimizador": self.optimizador,
+            "weight_decay": self.weight_decay,
+            "pesos": self.pesos.tolist() if self.pesos is not None else None,
+            "sesgo": self.sesgo.tolist() if self.sesgo is not None else None,
+            "opciones": {
+                "usar_normalizacion_adaptativa": self.usar_normalizacion_adaptativa,
+                "usar_feature_gating": self.usar_feature_gating,
+                "usar_spline": self.usar_spline,
+            },
+        }
+        if incluir_estado_entrenamiento:
+            datos["estado_entrenamiento"] = {
+                "motor": self.motor_optimizacion.estado(),
+                "normalizador": self.normalizador.estado(),
+                "gate_logits": (
+                    self.comp_puerta.logits.tolist()
+                    if self.comp_puerta is not None else None
+                ),
+                "spline": (
+                    self.transformador_spline.estado()
+                    if self.transformador_spline is not None else None
+                ),
+                "mejor_loss": (
+                    self.mejor_loss if np.isfinite(self.mejor_loss) else None
+                ),
+            }
+        return datos
+
+    def guardar(self, ruta: str,
+                incluir_estado_entrenamiento: bool = True) -> None:
+        datos = self.a_dict(incluir_estado_entrenamiento)
+        with open(ruta, "w", encoding="utf-8") as archivo:
+            json.dump(datos, archivo, ensure_ascii=False, allow_nan=False)
 
     @classmethod
     def cargar(cls, ruta: str) -> "NeuronaEntradaSigmoid":
-        with open(ruta, "r", encoding="utf-8") as f:
-            d = json.load(f)
-        obj = cls(d["input_size"], d["output_size"], d.get("nombre", "NeuronaEntradaSigmoid"))
-        if d.get("pesos") is not None:
-            obj.pesos = np.asarray(d["pesos"], dtype=_dtype())
-            obj.sesgo = np.asarray(d["sesgo"], dtype=_dtype())
+        with open(ruta, "r", encoding="utf-8") as archivo:
+            datos = json.load(archivo)
+
+        opciones = datos.get("opciones", {})
+        obj = cls(
+            input_size=datos["input_size"],
+            output_size=datos["output_size"],
+            nombre=datos.get("nombre", "NeuronaEntradaSigmoid"),
+            factor_escala=datos.get("factor_escala", 1.0),
+            learning_rate=datos.get("lr_base", 0.001),
+            optimizador=datos.get("optimizador", "adam"),
+            weight_decay=datos.get("weight_decay", 0.0),
+            usar_normalizacion_adaptativa=opciones.get(
+                "usar_normalizacion_adaptativa", False
+            ),
+            usar_feature_gating=opciones.get("usar_feature_gating", False),
+            usar_spline=opciones.get("usar_spline", False),
+        )
+
+        if datos.get("pesos") is not None:
+            pesos = np.asarray(datos["pesos"], dtype=_dtype())
+            sesgo = np.asarray(datos["sesgo"], dtype=_dtype())
+            if pesos.shape != (obj.input_size, obj.output_size):
+                raise ValueError("La matriz de pesos guardada tiene forma invÃ¡lida.")
+            if sesgo.shape != (1, obj.output_size):
+                raise ValueError("El sesgo guardado tiene forma invÃ¡lida.")
+            obj.pesos = pesos
+            obj.sesgo = sesgo
+
+        estado = datos.get("estado_entrenamiento", {})
+        if "motor" in estado:
+            obj.motor_optimizacion.cargar_estado(estado["motor"])
+        if "normalizador" in estado and obj.usar_normalizacion_adaptativa:
+            obj.normalizador.cargar_estado(estado["normalizador"])
+        if estado.get("gate_logits") is not None and obj.comp_puerta is not None:
+            gate = np.asarray(estado["gate_logits"], dtype=np.float64)
+            if gate.shape != obj.comp_puerta.logits.shape:
+                raise ValueError("Estado de compuerta incompatible.")
+            obj.comp_puerta.logits = gate
+        if estado.get("spline") is not None and obj.transformador_spline is not None:
+            obj.transformador_spline.cargar_estado(estado["spline"])
+        if estado.get("mejor_loss") is not None:
+            obj.mejor_loss = float(estado["mejor_loss"])
+        obj.lr_actual = float(datos.get("lr_actual", obj.lr_base))
         return obj
 
     def __str__(self) -> str:
-        return f"{self.nombre}(ent={self.input_size},sal={self.output_size},act=Sigmoid,opt={self.optimizador})"
+        return (
+            f"{self.nombre}(ent={self.input_size},sal={self.output_size},"
+            f"act=Sigmoid,opt={self.optimizador})"
+        )
+
+
+__all__ = [
+    "NeuronaEntradaSigmoid",
+    "NormalizadorAdaptativo",
+    "CompuertaCaracteristicas",
+    "TransformadorSpline",
+    "MotorOptimizacion",
+    "RingBuffer",
+]
