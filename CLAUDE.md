@@ -21,6 +21,14 @@ Upstream is `Chicook/WoldVirtualP2P3D` (issues and releases live there); this re
 (`CesarChaMal/WoldVirtualP2P3D`) is the development fork. `main` mirrors upstream snapshots;
 **`development` is the working branch**.
 
+## Key Documents
+
+| Document | Content |
+|---|---|
+| `README.md` / `README_EN.md` | Product and usage manual (Spanish canonical / English) |
+| `docs/IMPLEMENTATION_PLAN.md` / `docs/IMPLEMENTATION_PLAN_EN.md` | Findings catalog (V/H/M/L/G), Stages 0–6, D1–D16 debt cross-map |
+| `docs/STACK.md` / `docs/STACK_EN.md` | Current (as-is) vs target (to-be) technology stack |
+
 ## Directory Structure
 
 All source lives five levels deep under one snapshot directory:
