@@ -251,6 +251,11 @@ func _mi_uuid() -> String:
 	return str(valor) if valor != null else ""
 
 
+## Comprobación local de propiedad (índice propio o UUID dueño == mi UUID).
+## Solo decide en este peer (cargar, aportar, guardar); la autoridad final
+## es el anfitrión: en _validar_remitente se exige además la vinculación
+## verificada peer_id <-> UUID de su mapa privado. En el cliente no hay
+## mapa privado que consultar, por eso aquí la lógica no cambia.
 func _es_mi_isla(idx: int) -> bool:
 	var cm := get_parent()
 	if cm == null or idx < 0:
@@ -287,6 +292,10 @@ func _puedo_editar(idx: int) -> bool:
 ## Un cambio remoto solo vale si lo firma el dueño actual de esa isla. No hay
 ## excepción para el propio id ni para remitentes sin identificar: así ningún
 ## peer puede esculpir el terreno de otro aunque manipule el RPC.
+## En el anfitrión se exige además la identidad verificada: el UUID dueño es
+## visible en island_owners y cualquiera puede declararlo, así que no basta
+## con que coincida el dueño actual; el anfitrión solo acepta si su mapa
+## privado vincula este peer_id con ese UUID tras la prueba de posesión.
 func _validar_remitente(idx: int, remitente: int) -> bool:
 	if remitente <= 0 or idx < 0:
 		return false
@@ -297,7 +306,13 @@ func _validar_remitente(idx: int, remitente: int) -> bool:
 	if owners is Dictionary and owners.has(idx):
 		var dato = owners[idx]
 		if dato is Array and dato.size() > 0:
-			return int(dato[0]) == remitente
+			if int(dato[0]) != remitente:
+				return false
+			if multiplayer.is_server() and cm.has_method("peer_verificado"):
+				var dueno_uuid := _uuid_dueno(idx)
+				if dueno_uuid != "":
+					return bool(cm.call("peer_verificado", remitente, dueno_uuid))
+			return true
 	return false
 
 

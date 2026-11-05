@@ -6,6 +6,7 @@ extends RefCounted
 const RUTA := "user://registro.cfg"
 const SECCION_IDENTIDAD := "identidad"
 const SECCION_ISLA := "isla"
+const DOMINIO_PRUEBA := "wv-p2p3d-prueba-v2"
 
 
 ## Devuelve el UUID local y lo crea la primera vez. Nunca reescribe uno válido.
@@ -29,6 +30,37 @@ static func leer_identidad(ruta: String = RUTA) -> String:
 ## El UUID solo identifica si tiene la forma exacta que genera este script.
 static func uuid_valido(uuid: String) -> bool:
 	return uuid.length() == 32 and uuid.is_valid_hex_number()
+
+
+## Sal fresca de un solo uso para un desafío de posesión: 16 bytes aleatorios (32 hex).
+static func generar_sal() -> String:
+	return Crypto.new().generate_random_bytes(16).hex_encode()
+
+
+## Prueba de posesión sin revelar el UUID: SHA-256 en hex de
+## DOMINIO_PRUEBA + ":" + sal + ":" + uuid, calculado por partes.
+## Devuelve "" si el UUID no es válido o la sal está vacía.
+static func prueba_de_posesion(uuid: String, sal: String) -> String:
+	if not uuid_valido(uuid) or sal.is_empty():
+		return ""
+	var ctx := HashingContext.new()
+	if ctx.start(HashingContext.HASH_SHA256) != OK:
+		return ""
+	ctx.update(DOMINIO_PRUEBA.to_utf8_buffer())
+	ctx.update(":".to_utf8_buffer())
+	ctx.update(sal.to_utf8_buffer())
+	ctx.update(":".to_utf8_buffer())
+	ctx.update(uuid.to_utf8_buffer())
+	return ctx.finish().hex_encode()
+
+
+## Recomputa la prueba esperada y la compara con la recibida.
+## Devuelve falso ante cualquier entrada vacía o inválida.
+static func verificar_prueba(uuid: String, sal: String, prueba: String) -> bool:
+	if prueba.is_empty():
+		return false
+	var esperada := prueba_de_posesion(uuid, sal)
+	return not esperada.is_empty() and prueba == esperada
 
 
 ## Guarda la isla propia sin tocar nick, avatar, posición ni otras secciones.
