@@ -74,6 +74,7 @@ namespace Visor3D.Linux.Vistas
             }
 
             var red = new RedP2PServicio(_nick, 7890);
+            red.TokenInvitacion = _portal.TokenInvitacion;
             red.UrlTunnelLista += url => EnUi(() =>
             {
                 _portal.PublicTunnelUrl = url;

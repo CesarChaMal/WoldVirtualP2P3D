@@ -1101,6 +1101,7 @@ namespace Visor3D
             if (!EsTokenInvitacion(token)) return;
             _tokenInvitacion = token!;
             App.WebNodo.TokenInvitacion = token!;
+            if (_p2pServicio != null) _p2pServicio.TokenInvitacion = token!;
         }
 
         /// <summary>
@@ -1356,6 +1357,7 @@ namespace Visor3D
             try
             {
                 _p2pServicio = new RedP2PServicio(user);
+                _p2pServicio.TokenInvitacion = TokenSesionP2P;
 
                 _p2pServicio.UrlTunnelLista += url =>
                 {
@@ -1406,7 +1408,7 @@ namespace Visor3D
                 // Si había URL de amigo ingresada en el login, conectarse automáticamente
                 if (!string.IsNullOrWhiteSpace(_urlAmigoPendiente))
                 {
-                    bool ok = await _p2pServicio.ConectarConParAsync(_urlAmigoPendiente);
+                    bool ok = await _p2pServicio.ConectarConParAsync(_urlAmigoPendiente, string.IsNullOrEmpty(_tokenInvitacion) ? null : _tokenInvitacion);
                     Dispatcher.Invoke(() =>
                     {
                         if (ok)

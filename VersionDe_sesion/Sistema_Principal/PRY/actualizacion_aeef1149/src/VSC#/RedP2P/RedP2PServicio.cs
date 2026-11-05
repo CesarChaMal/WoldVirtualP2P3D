@@ -17,6 +17,18 @@ namespace Visor3D.RedP2P
         public string? UrlPublicaPropia  => Tunel.UrlPublica;
         public bool    TunnelActivo      => UrlPublicaPropia != null;
 
+        /// <summary>
+        /// Credencial de la sesión que el nodo exige para registrar pares
+        /// (POST /peer). Traspaso directo a <see cref="P2PNodo.TokenInvitacion"/>:
+        /// el visor la fija con la invitación vigente de la sesión (la propia
+        /// si abre la sesión; la adoptada del anfitrión raíz si es invitado).
+        /// </summary>
+        public string TokenInvitacion
+        {
+            get => Nodo.TokenInvitacion;
+            set => Nodo.TokenInvitacion = value;
+        }
+
         /// <summary>Disparado cuando el túnel ya tiene URL pública lista.</summary>
         public event Action<string>? UrlTunnelLista;
 
@@ -57,14 +69,18 @@ namespace Visor3D.RedP2P
 
         /// <summary>
         /// Si el usuario pegó la URL de un amigo, intenta hacer ping y luego anuncio.
+        /// El anuncio lleva la invitación de la sesión del amigo
+        /// (<paramref name="tokenInvitacion"/>, extraída de su enlace de
+        /// invitación) para que su nodo admita el registro; sin ella, un
+        /// nodo protegido lo rechazará.
         /// </summary>
-        public async Task<bool> ConectarConParAsync(string urlPar)
+        public async Task<bool> ConectarConParAsync(string urlPar, string? tokenInvitacion = null)
         {
             if (string.IsNullOrWhiteSpace(urlPar)) return false;
 
             bool vivo = await P2PNodo.PingParAsync(urlPar).ConfigureAwait(false);
             if (vivo && UrlPublicaPropia != null)
-                await Nodo.AnunciarseAlParAsync(urlPar, UrlPublicaPropia).ConfigureAwait(false);
+                await Nodo.AnunciarseAlParAsync(urlPar, UrlPublicaPropia, tokenInvitacion).ConfigureAwait(false);
 
             return vivo;
         }
