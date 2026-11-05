@@ -17,6 +17,11 @@ const Identidad = preload("res://gdscrip/Identidad.gd")
 ## Registro exclusivo del anfitrión: UUID estable -> índice de isla.
 const REGISTRO_ISLAS := "user://islas_registro.cfg"
 
+## Ventanas de confirmación diferida de reclamaciones (V2, en milisegundos).
+const VENTANA_VERIFICADA_MS := 10000
+const VENTANA_COMPAT_MS := 30000
+const TTL_DESAFIO_MS := 15000
+
 @export var chunk_size: float = 199.5
 @export var islands_per_row: int = 10
 
@@ -52,6 +57,13 @@ var _mi_isla_anunciada := false
 var _registro_islas_ruta := REGISTRO_ISLAS
 var _uuid_por_isla := {} # island_index -> UUID estable (todos los peers)
 var _islas_por_uuid := {} # UUID estable -> island_index (autoridad del anfitrion)
+## Estado privado de identidad verificada (V2): SOLO vive en el anfitrión.
+## Nunca se difunde, nunca entra en island_owners, _sync_island_owner,
+## _spawn_island_for_player ni en el roster, y no se persiste.
+var _mapa_privado_uuid_peer := {} # UUID -> peer_id verificado en esta sesión
+var _peer_por_uuid_verificado := {} # peer_id -> UUID verificado (inverso)
+var _desafios := {} # peer_id -> {sal, uuid, indice, emitido, consumido}
+var _reclamaciones_pendientes := {} # peer_id -> {indice, uuid, nick, verificada, madura_en}
 var _save_pos_timer := 0.0
 var _last_saved_pos := Vector3.ZERO
 var _last_target_host := "127.0.0.1"
@@ -407,6 +419,9 @@ func _iniciar_como_servidor():
 		_mi_isla_guardada = int(_islas_por_uuid[_mi_uuid])
 	owner_names[multiplayer.get_unique_id()] = _nick_unico(_mi_nick, multiplayer.get_unique_id())
 	_register_player(multiplayer.get_unique_id(), _mi_uuid, _mi_isla_guardada)
+	# El anfitrión se auto-verifica para su propia isla: sin esto, la segunda
+	# puerta de Construccion._validar_remitente rechazaria sus propios aportes.
+	_registrar_verificado(multiplayer.get_unique_id(), _mi_uuid)
 
 	_mi_id = multiplayer.get_unique_id()
 	_roster = {_mi_id: {"order": 0, "url": _mi_url, "ip": _mi_ip, "nick": _mi_nick}}
@@ -449,6 +464,71 @@ func _claim_island(idx: int, nick: String, uuid: String = "") -> void:
 	pending_uuids[sender] = uuid if Identidad.uuid_valido(uuid) else ""
 	# Nombre único: si otro jugador ya usa ese nick, se sufija (#2, #3...).
 	owner_names[sender] = _nick_unico(nick, sender)
+	# Si la isla resuelta tiene dueño registrado desconectado y el reclamante
+	# aun no esta verificado para ese UUID, el anfitrión lo desafía a probar
+	# la posesión (V2): sal fresca de un solo uso, la prueba nunca es el UUID.
+	if Identidad.uuid_valido(uuid):
+		var indice_resuelto := -1
+		if _islas_por_uuid.has(uuid):
+			indice_resuelto = int(_islas_por_uuid[uuid])
+		elif idx >= 0 and str(_uuid_por_isla.get(idx, "")) == uuid:
+			indice_resuelto = idx
+		var dueno_reg := str(_uuid_por_isla.get(indice_resuelto, "")) if indice_resuelto >= 0 else ""
+		if dueno_reg != "" and dueno_reg == uuid and not peer_verificado(sender, uuid) and not _indice_activo(indice_resuelto):
+			var sal := Red.generar_sal_desafio()
+			_desafios[sender] = {"sal": sal, "uuid": uuid, "indice": indice_resuelto, "emitido": Time.get_ticks_msec(), "consumido": false}
+			rpc_id(sender, "_desafio_posesion", sal, indice_resuelto)
+
+## Desafio de posesión (lado cliente): responde con la prueba de SU UUID.
+## El UUID no viaja en esta respuesta; solo el hash salado del desafío.
+## Un cliente anterior (2.7.5) no tiene este método y nunca responde:
+## su reclamación sigue por la vía compat de confirmación diferida.
+@rpc("authority", "reliable")
+func _desafio_posesion(sal: String, indice: int) -> void:
+	var prueba := Identidad.prueba_de_posesion(_mi_uuid, sal)
+	if prueba.is_empty():
+		return
+	rpc_id(1, "_responder_desafio", prueba)
+
+
+## Respuesta al desafío (lado anfitrión): verifica la prueba contra el
+## desafío emitido a ese peer. Si pasa, la reclamación de ese peer queda
+## verificada y madura a los VENTANA_VERIFICADA_MS desde la emisión; si
+## falla o el desafío caducó, la entrada sigue como no verificada hasta
+## su ventana compat (no se castiga al cliente honesto sin prueba).
+@rpc("any_peer", "reliable")
+func _responder_desafio(prueba: String) -> void:
+	if not multiplayer.is_server():
+		return
+	var remitente := multiplayer.get_remote_sender_id()
+	if remitente <= 0 or prueba.is_empty() or not _desafios.has(remitente):
+		return
+	var desafio: Dictionary = _desafios[remitente]
+	if bool(desafio.get("consumido", false)):
+		return
+	var ahora := Time.get_ticks_msec()
+	var emitido := int(desafio.get("emitido", ahora))
+	var uuid := str(desafio.get("uuid", ""))
+	if ahora - emitido > TTL_DESAFIO_MS or not Identidad.verificar_prueba(uuid, str(desafio.get("sal", "")), prueba):
+		_desafios.erase(remitente)
+		if _reclamaciones_pendientes.has(remitente):
+			var pendiente: Dictionary = _reclamaciones_pendientes[remitente]
+			pendiente["verificada"] = false
+			_reclamaciones_pendientes[remitente] = pendiente
+		return
+	_registrar_verificado(remitente, uuid)
+	if _reclamaciones_pendientes.has(remitente):
+		var entrada: Dictionary = _reclamaciones_pendientes[remitente]
+		entrada["verificada"] = true
+		entrada["madura_en"] = emitido + VENTANA_VERIFICADA_MS
+		_reclamaciones_pendientes[remitente] = entrada
+		_desafios.erase(remitente)
+		return
+	# La reclamación aun no entro en la cola (margen inicial de 2,5 s): el
+	# desafío queda consumido y _encolar_reclamacion recoge su emisión.
+	desafio["consumido"] = true
+	_desafios[remitente] = desafio
+
 
 ## Cada peer publica su URL de túnel / IP LAN para que el roster permita reconectar.
 @rpc("any_peer", "reliable")
@@ -492,6 +572,16 @@ func _adopt_or_register(id: int) -> void:
 	pending_uuids.erase(id)
 	var reclamada := _resolver_isla_reclamada(id, claimed, uuid)
 	if reclamada >= 0:
+		var dueno_reg := str(_uuid_por_isla.get(reclamada, ""))
+		# Confirmación diferida (V2): una isla de dueño registrado ausente con
+		# UUID coincidente NO se adopta al instante; entra en la cola a la
+		# espera de la prueba de posesión (o de la ventana compat).
+		# La misma disciplina cubre la isla SIN dueño registrado reclamada
+		# sin UUID (uuid == "" y dueno_reg == ""): antes _resolver la
+		# tomaba al pie de la letra y se adoptaba igual de inmediata.
+		if (dueno_reg != "" and dueno_reg == uuid) or (uuid == "" and dueno_reg == ""):
+			_encolar_reclamacion(id, reclamada, uuid, str(owner_names.get(id, "")))
+			return
 		_adoptar_isla(id, reclamada, uuid)
 		return
 	# Jugador nuevo, identidad desconocida o isla ya ocupada: crear otra.
@@ -522,6 +612,22 @@ func _puede_reclamar_isla(index: int, id: int, uuid: String) -> bool:
 		return false
 	if uuid == "" and dueno != "":
 		return false
+	# Bloqueo V2 (a): la primera reclamación verificada pendiente para esta
+	# isla manda; cualquier otro peer (verificado o no) queda bloqueado.
+	var primera_verificada := -1
+	for pid in _reclamaciones_pendientes.keys():
+		var entrada_q: Dictionary = _reclamaciones_pendientes[pid]
+		if int(entrada_q.get("indice", -2)) == index and bool(entrada_q.get("verificada", false)):
+			primera_verificada = int(pid)
+			break
+	if primera_verificada >= 0 and primera_verificada != id:
+		return false
+	# Bloqueo V2 (b): el dueño registrado esta verificado y conectado bajo
+	# otro peer_id (refuerzo del bucle de vivos usando el mapa privado).
+	if dueno != "" and _mapa_privado_uuid_peer.has(dueno):
+		var vinculado := int(_mapa_privado_uuid_peer[dueno])
+		if vinculado != id and _peer_vivo(vinculado):
+			return false
 	for p_id in active_islands.keys():
 		if int(p_id) == id or int(active_islands[p_id]) != index:
 			continue
@@ -530,11 +636,120 @@ func _puede_reclamar_isla(index: int, id: int, uuid: String) -> bool:
 	return true
 
 
+## API pública para Construccion.gd: true solo si el anfitrión verificó en
+## esta sesión que este peer posee ese UUID (prueba de posesión V2).
+## En un peer que no es anfitrión devuelve siempre false: no hay mapa.
+func peer_verificado(id: int, uuid: String) -> bool:
+	if not multiplayer.is_server():
+		return false
+	if id <= 0 or uuid == "":
+		return false
+	return int(_mapa_privado_uuid_peer.get(uuid, -1)) == id and str(_peer_por_uuid_verificado.get(id, "")) == uuid
+
+
+## Rellena ambos mapas privados; si el UUID estaba verificado por otro
+## peer, esa vinculación anterior queda revocada.
+func _registrar_verificado(id: int, uuid: String) -> void:
+	if not multiplayer.is_server() or id <= 0 or not Identidad.uuid_valido(uuid):
+		return
+	var anterior_peer := int(_mapa_privado_uuid_peer.get(uuid, -1))
+	if anterior_peer > 0 and anterior_peer != id:
+		_peer_por_uuid_verificado.erase(anterior_peer)
+	var anterior_uuid := str(_peer_por_uuid_verificado.get(id, ""))
+	if anterior_uuid != "" and anterior_uuid != uuid:
+		_mapa_privado_uuid_peer.erase(anterior_uuid)
+	_mapa_privado_uuid_peer[uuid] = id
+	_peer_por_uuid_verificado[id] = uuid
+
+
+## Limpieza al desconectar: sin su peer, la vinculación no vale nada.
+func _olvidar_verificado(id: int) -> void:
+	var uuid := str(_peer_por_uuid_verificado.get(id, ""))
+	if uuid != "":
+		_mapa_privado_uuid_peer.erase(uuid)
+	_peer_por_uuid_verificado.erase(id)
+
+
+## Deja una reclamación en espera de confirmación diferida: nace no
+## verificada con ventana compat, salvo que el peer ya probara la
+## posesión del UUID (entonces madura desde la emisión del desafío).
+func _encolar_reclamacion(id: int, indice: int, uuid: String, nick: String) -> void:
+	if not multiplayer.is_server() or id <= 0 or indice < 0:
+		return
+	var ahora := Time.get_ticks_msec()
+	var verificada := uuid != "" and peer_verificado(id, uuid)
+	var emitido := ahora
+	if _desafios.has(id):
+		var desafio: Dictionary = _desafios[id]
+		if bool(desafio.get("consumido", false)) and str(desafio.get("uuid", "")) == uuid:
+			emitido = int(desafio.get("emitido", ahora))
+			_desafios.erase(id)
+	_reclamaciones_pendientes[id] = {"indice": indice, "uuid": uuid, "nick": nick, "verificada": verificada, "madura_en": (emitido + VENTANA_VERIFICADA_MS) if verificada else (ahora + VENTANA_COMPAT_MS)}
+	print("[ChunkManager/V2] Reclamación en cola: jugador ", id, " isla ", indice, " verificada=", verificada)
+
+
+## Revisa la cola (la llama _process en el anfitrión, sin E/S nueva):
+## cada entrada madura se revalida y se adopta o se descarta; al
+## descartarla, el reclamante recibe una isla nueva sin dueño previo
+## en vez de quedarse sin isla. La verificada gana siempre a la no
+## verificada; entre verificadas, la primera.
+func _procesar_reclamaciones() -> void:
+	if not multiplayer.is_server():
+		return
+	var ahora := Time.get_ticks_msec()
+	for id in _reclamaciones_pendientes.keys():
+		if not _reclamaciones_pendientes.has(id):
+			continue
+		if not _peer_vivo(int(id)):
+			_reclamaciones_pendientes.erase(id)
+			continue
+		var entrada: Dictionary = _reclamaciones_pendientes[id]
+		if ahora < int(entrada.get("madura_en", 0)):
+			continue
+		var indice := int(entrada.get("indice", -1))
+		var uuid := str(entrada.get("uuid", ""))
+		var rival_verificada := false
+		for otro in _reclamaciones_pendientes.keys():
+			if int(otro) == int(id):
+				continue
+			var otra: Dictionary = _reclamaciones_pendientes[otro]
+			if int(otra.get("indice", -2)) == indice and bool(otra.get("verificada", false)):
+				rival_verificada = true
+		if rival_verificada and not bool(entrada.get("verificada", false)):
+			_reclamaciones_pendientes.erase(id)
+			_register_player(int(id), "")
+			continue
+		if not _puede_reclamar_isla(indice, int(id), uuid):
+			_reclamaciones_pendientes.erase(id)
+			_register_player(int(id), "")
+			continue
+		_reclamaciones_pendientes.erase(id)
+		_adoptar_isla(int(id), indice, uuid)
+
+
+## Cancela las reclamaciones de otros peers sobre una isla ya adoptada:
+## cuando el dueño real vuelve y se verifica, las ajenas desaparecen.
+func _cancelar_reclamaciones_de_isla(indice: int, excepto_id: int) -> void:
+	var cancelados: Array = []
+	for pid in _reclamaciones_pendientes.keys():
+		if int(pid) == excepto_id:
+			continue
+		var entrada: Dictionary = _reclamaciones_pendientes[pid]
+		if int(entrada.get("indice", -2)) == indice:
+			_reclamaciones_pendientes.erase(pid)
+			cancelados.append(int(pid))
+	# El reclamante cancelado no se queda sin isla: recibe una nueva sin
+	# dueño previo y sin tocar el registro del dueño que sí adoptó.
+	for pid in cancelados:
+		_register_player(int(pid), "")
+
+
 func _peer_vivo(id: int) -> bool:
 	return id == multiplayer.get_unique_id() or multiplayer.get_peers().has(id)
 
 
 func _adoptar_isla(id: int, index: int, uuid: String) -> void:
+	var dueno_previo := str(_uuid_por_isla.get(index, ""))
 	# Se depuran entradas obsoletas con el mismo indice (IDs y dueños antiguos).
 	_drop_fake_key(index)
 	for old_id in active_islands.keys():
@@ -544,6 +759,12 @@ func _adoptar_isla(id: int, index: int, uuid: String) -> void:
 	next_island_index = maxi(next_island_index, index + 1)
 	var nick := str(owner_names.get(id, ""))
 	_vincular_propietario(index, id, nick, uuid)
+	# Queda verificado solo si el UUID coincide con el dueño registrado
+	# (o la isla no tenia dueño previo), y las demás reclamaciones de
+	# esta isla se cancelan: la adopción cierra la contienda.
+	if Identidad.uuid_valido(uuid) and (dueno_previo == "" or dueno_previo == uuid):
+		_registrar_verificado(id, uuid)
+	_cancelar_reclamaciones_de_isla(index, id)
 	# call_local: también actualiza la copia del anfitrión. Si la isla ya estaba
 	# instanciada, el receptor solo refresca dueño y reactiva al jugador propio.
 	rpc("_spawn_island_for_player", id, index, nick, uuid)
@@ -565,7 +786,12 @@ func _register_player(id: int, uuid: String = "", preferido: int = -1):
 	active_islands[id] = index
 	next_island_index = maxi(next_island_index, index + 1)
 	var nick := str(owner_names.get(id, ""))
+	# Si el UUID ya estaba registrado para OTRA isla, este registro nuevo
+	# no verifica nada: verificarlo revocaría al dueño anterior.
+	var uuid_ya_de_otra := Identidad.uuid_valido(uuid) and _islas_por_uuid.has(uuid) and int(_islas_por_uuid[uuid]) != index
 	_vincular_propietario(index, id, nick, uuid)
+	if Identidad.uuid_valido(uuid) and not uuid_ya_de_otra:
+		_registrar_verificado(id, uuid)
 	rpc("_spawn_island_for_player", id, index, nick, uuid)
 
 
@@ -660,6 +886,9 @@ func _procesar_registro_isla(sender: int, index: int, uuid: String) -> String:
 		return "Tu identidad ya tiene registrada la isla %d." % int(_islas_por_uuid[uuid])
 	var nick := str(owner_names.get(sender, _mi_nick))
 	_vincular_propietario(index, sender, nick, uuid)
+	# Registro aceptado (sin dueño previo distinto): el remitente queda
+	# verificado para ese UUID y puede aportar a su isla en esta sesión.
+	_registrar_verificado(sender, uuid)
 	if is_inside_tree():
 		rpc("_sync_island_owner", index, sender, nick, uuid)
 	return ""
@@ -705,6 +934,11 @@ func _on_peer_disconnected(id):
 			rpc("_despawn_island", isla_saliente)
 		# La plaza del jugador que se va queda libre para el siguiente.
 		_sondas.erase(id)
+		# Una reclamación sin su peer no madura nunca: fuera su vinculación
+		# verificada, su desafío y su entrada en la cola.
+		_olvidar_verificado(id)
+		_desafios.erase(id)
+		_reclamaciones_pendientes.erase(id)
 		var liberadas := Turnos.liberar(_turnos, id)
 		var era_reciclado := _reciclados.erase(id)
 		if not liberadas.is_empty() or era_reciclado:
@@ -851,6 +1085,7 @@ func _promover_a_servidor() -> void:
 				covered[hidx] = true
 	owner_names[new_id] = _nick_unico(_mi_nick, new_id)
 	_vincular_propietario(my_own_index, new_id, _mi_nick, _mi_uuid)
+	_registrar_verificado(new_id, _mi_uuid)
 	_mi_isla_guardada = my_own_index
 	Identidad.guardar_mi_isla(my_own_index, _mi_uuid)
 	_roster = {new_id: {"order": 0, "url": _mi_url, "ip": _mi_ip, "nick": _mi_nick}}
@@ -1037,6 +1272,8 @@ func _process(delta: float) -> void:
 	if _save_pos_timer >= 1.0:
 		_save_pos_timer = 0.0
 		_guardar_posicion_jugador()
+		if multiplayer.is_server():
+			_procesar_reclamaciones()
 
 
 func _actualizar_mi_url() -> void:

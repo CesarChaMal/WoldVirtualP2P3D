@@ -4,9 +4,16 @@ extends RefCounted
 ## ambos lados interpreten las mismas banderas (REGLAS_DE_ACTUALIZACION R8).
 
 const PUERTO_WS := 8911
+const Identidad = preload("res://gdscrip/Identidad.gd")
+
+## Versión del esquema de prueba de posesión de identidad (V2).
+## Un par con version_prueba >= VERSION_PRUEBA responde al desafío del
+## anfitrión con Identidad.prueba_de_posesion(); un par anterior no se
+## rechaza: entra por la vía compat de confirmación diferida.
+const VERSION_PRUEBA := 2
 
 
-## Devuelve {host, port, force_host, is_client, invitacion, source}.
+## Devuelve {host, port, force_host, is_client, invitacion, version_prueba, source}.
 ## `invitacion` es la credencial de la sesión que el proxy del anfitrión exige
 ## en el handshake WebSocket (`?invitacion=`); sin ella no se entra al mundo.
 static func resolver_objetivo() -> Dictionary:
@@ -16,6 +23,7 @@ static func resolver_objetivo() -> Dictionary:
 		"force_host": false,
 		"is_client": false,
 		"invitacion": "",
+		"version_prueba": VERSION_PRUEBA,
 		"source": "predeterminado (loopback local)"
 	}
 
@@ -241,3 +249,17 @@ static func buscar_host_en_lan(timeout_ms: int = 350) -> Dictionary:
 					return {"host": sender_ip, "port": beacon_port}
 	listener.close()
 	return {}
+
+
+## Sal fresca de un solo uso para el desafío de posesión que el anfitrión
+## envía al par que reclama la isla de un dueño registrado (V2). Delega en
+## Identidad, dueña de las primitivas de la prueba; Red solo la expone a
+## los consumidores de red (ChunkManager y Sonda) como el resto de apoyos.
+static func generar_sal_desafio() -> String:
+	return Identidad.generar_sal()
+
+
+## True si la versión declarada por un par trae prueba de posesión (V2 o
+## posterior). Una versión menor no es un error: es la vía compat.
+static func es_version_con_prueba(version: int) -> bool:
+	return version >= VERSION_PRUEBA
