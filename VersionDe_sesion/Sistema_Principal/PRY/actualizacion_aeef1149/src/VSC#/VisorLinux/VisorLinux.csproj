@@ -34,6 +34,7 @@
     <Compile Include="../Chat/ChatRelayServer.cs" Link="Comun/Chat/ChatRelayServer.cs" />
     <Compile Include="../Chat/ChatClient.cs" Link="Comun/Chat/ChatClient.cs" />
     <Compile Include="../Chat/FriendsStore.cs" Link="Comun/Chat/FriendsStore.cs" />
+    <Compile Include="../Chat/TokenSesionChat.cs" Link="Comun/Chat/TokenSesionChat.cs" />
     <Compile Include="../STM_actualizar/ReleaseInfo.cs" Link="Comun/Actualizar/ReleaseInfo.cs" />
     <Compile Include="../STM_actualizar/UpdateChecker.cs" Link="Comun/Actualizar/UpdateChecker.cs" />
     <Compile Include="../STM_actualizar/UpdateDownloader.cs" Link="Comun/Actualizar/UpdateDownloader.cs" />

@@ -10,6 +10,7 @@ namespace Visor3D.Chat
 {
     /// <summary>
     /// Cliente del chat: habla con el relay del anfitrión mediante WebSocket.
+    /// Al conectar presenta primero el token de la sesión (trama auth, G1).
     /// Los eventos llegan desde el hilo de recepción; la interfaz debe marshalling
     /// a su Dispatcher.
     /// </summary>
@@ -21,6 +22,7 @@ namespace Visor3D.Chat
         private int _avisoDesconexion;
         private int _suprimirAviso;
         private int _id;
+        private volatile bool _authRechazada;
         private volatile string _uid;
         private bool _disposed;
 
@@ -29,6 +31,13 @@ namespace Visor3D.Chat
         public int MyId => Volatile.Read(ref _id);
         public string EndPoint { get; private set; } = "";
         public bool IsConnected => _ws?.State == WebSocketState.Open;
+
+        /// <summary>
+        /// Token de la sesión que se presenta al relay al conectar, si la vista
+        /// lo conoce (p. ej. el adoptado del anfitrión raíz). Si queda vacío, se
+        /// toma de la propia URI de conexión o del token compartido del proceso.
+        /// </summary>
+        public string TokenSesion { get; set; } = "";
 
         public event Action<string>? Connected;
         public event Action<string>? Disconnected;
@@ -47,9 +56,10 @@ namespace Visor3D.Chat
         public event Action<string, string, string, long>? DirectMessageReceived; // uid, nombre, texto, ts
         public event Action<string, string>? DirectMessageFailed;           // uid, motivo
 
-        public ChatClient(string name, string uid = "")
+        public ChatClient(string name, string uid = "", string tokenSesion = "")
         {
             Name = ChatProtocol.CleanName(name);
+            TokenSesion = tokenSesion ?? "";
             string limpio = ChatProtocol.CleanUid(uid);
             _uid = limpio.Length > 0 ? limpio : ChatProtocol.BuildFallbackUid(Name);
         }
@@ -63,6 +73,7 @@ namespace Visor3D.Chat
             ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(15);
             Volatile.Write(ref _avisoDesconexion, 0);
             Volatile.Write(ref _id, -1);
+            _authRechazada = false;
 
             try
             {
@@ -81,9 +92,46 @@ namespace Visor3D.Chat
             _cts = new CancellationTokenSource();
             _ = Task.Run(() => BucleRecepcionAsync(ws, _cts.Token));
 
+            // Autenticación del relay (G1): la primera trama tras el handshake
+            // es el token de la sesión; el hello va después, como siempre.
+            await EnviarJsonAsync(new { t = "auth", token = ResolverTokenSesion(uri) }, _cts.Token);
             await EnviarJsonAsync(new { t = "hello", name = Name, uid = _uid }, _cts.Token);
             Connected?.Invoke(uri);
             return true;
+        }
+
+        /// <summary>
+        /// Token que se presenta al relay, en este orden: el explícito de la
+        /// vista (TokenSesion), el de la propia URI de conexión
+        /// (?invitacion= o ?token=) y el compartido del proceso
+        /// (TokenSesionChat.Actual, el caso del cliente local del anfitrión,
+        /// que vive en el mismo proceso que su relay). Su valor nunca se
+        /// registra en ningún log.
+        /// </summary>
+        private string ResolverTokenSesion(string uriConexion)
+        {
+            if (TokenSesionChat.FormatoValido(TokenSesion))
+                return TokenSesion;
+
+            if (Uri.TryCreate(uriConexion, UriKind.Absolute, out Uri? uri))
+            {
+                string consulta = uri.Query.TrimStart('?');
+                foreach (string parte in consulta.Split('&', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    int igual = parte.IndexOf('=');
+                    if (igual <= 0) continue;
+
+                    string clave = Uri.UnescapeDataString(parte[..igual]);
+                    if (!clave.Equals("invitacion", StringComparison.OrdinalIgnoreCase) &&
+                        !clave.Equals("token", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    string valor = Uri.UnescapeDataString(parte[(igual + 1)..]).Trim();
+                    if (TokenSesionChat.FormatoValido(valor)) return valor;
+                }
+            }
+
+            return TokenSesionChat.Actual;
         }
 
         public Task SendTextAsync(string text)
@@ -205,6 +253,9 @@ namespace Visor3D.Chat
             }
             finally
             {
+                if (_authRechazada)
+                    motivo = "Autenticación rechazada por el relay del chat";
+
                 if (Volatile.Read(ref _suprimirAviso) == 0 &&
                     Interlocked.Exchange(ref _avisoDesconexion, 1) == 0)
                     Disconnected?.Invoke(motivo);
@@ -225,6 +276,18 @@ namespace Visor3D.Chat
 
                 switch (tipo)
                 {
+                    case "auth_ok":
+                        // El relay aceptó el token de la sesión; sigue el flujo normal.
+                        break;
+
+                    case "auth_fail":
+                        // El relay rechaza el token y cierra a continuación
+                        // (código 1008): se avisa ahora y la desconexión
+                        // llevará este mismo motivo.
+                        _authRechazada = true;
+                        ErrorReceived?.Invoke("El relay del chat rechazó la autenticación de la sesión");
+                        break;
+
                     case "welcome":
                         if (raiz.TryGetProperty("id", out var idProp))
                             Volatile.Write(ref _id, idProp.GetInt32());
