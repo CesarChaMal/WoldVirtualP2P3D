@@ -74,10 +74,9 @@ var _beacon_udp: PacketPeerUDP = null
 var _beacon_timer := 0.0
 
 ## --- Migración de anfitrión / roster ---
-var _roster := {}              # id -> {order, url, ip, nick}
+var _roster := {}              # id -> {order, url, nick}
 var _mi_id := 0
 var _mi_url := ""
-var _mi_ip := ""
 var _next_order := 1
 var _migrando := false
 var _url_poll := 0.0
@@ -302,7 +301,6 @@ func _ready():
 	_mi_nick = _leer_nick()
 	_mi_uuid = Identidad.asegurar_identidad()
 	_mi_isla_guardada = Identidad.leer_mi_isla(_mi_uuid)
-	_mi_ip = _primera_ip_lan()
 	_mi_url = _leer_mi_url()
 	set_process(true)
 	
@@ -376,7 +374,7 @@ func _on_connected_ok():
 	# el servidor reconoce el UUID estable y NO me creara isla nueva.
 	rpc_id(1, "_claim_island", _mi_isla_guardada, _mi_nick, _mi_uuid)
 	# Compartir mi URL pública con el resto (para poder reconectar tras migración).
-	rpc_id(1, "_reportar_direccion", _mi_url, _mi_ip)
+	rpc_id(1, "_reportar_direccion", _mi_url)
 	# Reserva del avatar: la plaza la decide el anfitrión y responde si toca sustituto.
 	var ruta_avatar := _avatar_local()
 	if ruta_avatar.is_empty():
@@ -424,10 +422,10 @@ func _iniciar_como_servidor():
 	_registrar_verificado(multiplayer.get_unique_id(), _mi_uuid)
 
 	_mi_id = multiplayer.get_unique_id()
-	_roster = {_mi_id: {"order": 0, "url": _mi_url, "ip": _mi_ip, "nick": _mi_nick}}
+	_roster = {_mi_id: {"order": 0, "url": _mi_url, "nick": _mi_nick}}
 	_next_order = 1
 	_broadcast_roster()
-	_escribir_host_sesion(_mi_url if not _mi_url.is_empty() else _mi_ip)
+	_escribir_host_sesion(_mi_url)
 
 func _on_connected_fail():
 	_fallo_migracion = true
@@ -449,7 +447,7 @@ func _on_peer_connected(id):
 		# una reconexion (ya tenia isla), se adopta sin crear nada nuevo.
 		_adopt_or_register.bind(id).call_deferred()
 		# Roster: orden de llegada + dirección para poder reconectar tras migración.
-		_roster[id] = {"order": _next_order, "url": "", "ip": "", "nick": ""}
+		_roster[id] = {"order": _next_order, "url": "", "nick": ""}
 		_next_order += 1
 		_broadcast_roster()
 
@@ -530,22 +528,27 @@ func _responder_desafio(prueba: String) -> void:
 	_desafios[remitente] = desafio
 
 
-## Cada peer publica su URL de túnel / IP LAN para que el roster permita reconectar.
+## Cada peer publica su URL de túnel para que el roster permita reconectar.
+## G4 (privacidad): la IP LAN nunca viaja al roster; la URL del túnel basta.
 @rpc("any_peer", "reliable")
-func _reportar_direccion(url: String, ip: String) -> void:
+func _reportar_direccion(url: String) -> void:
 	if not multiplayer.is_server():
 		return
 	var sender := multiplayer.get_remote_sender_id()
 	if not _roster.has(sender):
-		_roster[sender] = {"order": _next_order, "url": "", "ip": "", "nick": ""}
+		_roster[sender] = {"order": _next_order, "url": "", "nick": ""}
 		_next_order += 1
 	_roster[sender]["url"] = url
-	_roster[sender]["ip"] = ip
 	_broadcast_roster()
 
-## El servidor difunde el roster completo (id, orden, URL, IP, nick).
+## El servidor difunde el roster completo (id, orden, URL, nick).
 @rpc("authority", "reliable")
 func _sync_roster(data: Dictionary) -> void:
+	# G4 (privacidad): un anfitrión antiguo podía incluir la IP en el roster;
+	# se descarta al recibir para que nunca quede en memoria ni se redifunda.
+	for id in data.keys():
+		if data[id] is Dictionary:
+			data[id].erase("ip")
 	_roster = data
 
 func _broadcast_roster() -> void:
@@ -1001,25 +1004,22 @@ func _candidatos_migracion() -> Array:
 		lista.append({
 			"id": int(id),
 			"order": int(e.get("order", 999)),
-			"url": str(e.get("url", "")),
-			"ip": str(e.get("ip", ""))
+			"url": str(e.get("url", ""))
 		})
 	lista.sort_custom(func(a, b): return int(a["order"]) < int(b["order"]))
 	var sin_servidor := lista.filter(func(c): return int(c["id"]) != 1)
 	if sin_servidor.is_empty():
 		sin_servidor = lista
-	# En Internet solo sirven peers con URL de túnel; la IP LAN es último recurso.
+	# En Internet solo sirven peers con URL de túnel (G4: la IP no viaja en el roster).
 	var con_url := sin_servidor.filter(func(c): return not str(c["url"]).is_empty())
 	return con_url if not con_url.is_empty() else sin_servidor
 
 
 func _url_candidato(c: Dictionary) -> String:
+	# G4 (privacidad): solo la URL del túnel; la IP LAN ya no forma parte del roster.
 	var u := str(c.get("url", "")).strip_edges()
 	if not u.is_empty():
 		return _resolver_url_ws(u, PUERTO_WS)
-	var ip := str(c.get("ip", "")).strip_edges()
-	if not ip.is_empty():
-		return "ws://%s:%d" % [ip, PUERTO_WS]
 	return ""
 
 
@@ -1088,10 +1088,10 @@ func _promover_a_servidor() -> void:
 	_registrar_verificado(new_id, _mi_uuid)
 	_mi_isla_guardada = my_own_index
 	Identidad.guardar_mi_isla(my_own_index, _mi_uuid)
-	_roster = {new_id: {"order": 0, "url": _mi_url, "ip": _mi_ip, "nick": _mi_nick}}
+	_roster = {new_id: {"order": 0, "url": _mi_url, "nick": _mi_nick}}
 	_next_order = 1
 	_broadcast_roster()
-	_escribir_host_sesion(_mi_url if not _mi_url.is_empty() else _mi_ip)
+	_escribir_host_sesion(_mi_url)
 	print("[Migracion] Ahora soy el anfitrion. next_island_index=", next_island_index)
 	_migrando = false
 
@@ -1288,18 +1288,12 @@ func _actualizar_mi_url() -> void:
 		if _roster.has(mid):
 			_roster[mid]["url"] = _mi_url
 			_broadcast_roster()
-		_escribir_host_sesion(_mi_url if not _mi_url.is_empty() else _mi_ip)
+		_escribir_host_sesion(_mi_url)
 	elif _mi_id > 0:
-		rpc_id(1, "_reportar_direccion", _mi_url, _mi_ip)
+		rpc_id(1, "_reportar_direccion", _mi_url)
 
 
-func _primera_ip_lan() -> String:
-	for ip in IP.get_local_addresses():
-		if ip.contains(".") and not ip.begins_with("127.") and not ip.begins_with("169.254."):
-			return ip
-	return ""
-
-
+## Solo se lee la URL del túnel; cualquier IP heredada en el JSON se ignora (G4).
 func _leer_mi_url() -> String:
 	if not FileAccess.file_exists("user://p2p_session.json"):
 		return ""
@@ -1315,6 +1309,7 @@ func _leer_mi_url() -> String:
 
 
 func _escribir_host_sesion(url: String) -> void:
+	# G4 (privacidad): a disco solo llega la URL del túnel; la IP LAN nunca se escribe.
 	if url.is_empty():
 		return
 	var f := FileAccess.open("user://session_host.txt", FileAccess.WRITE)
