@@ -13,6 +13,7 @@ const PanelConstruccion := preload("res://gdscrip/ConstructorPanel.gd")
 const Historial := preload("res://gdscrip/construccion/HistorialEdicion.gd")
 const Inventario := preload("res://gdscrip/construccion/InventarioConstruccion.gd")
 const Contorno := preload("res://gdscrip/construccion/ContornoIsla.gd")
+const ValRed := preload("res://gdscrip/ValidacionRed.gd")
 
 const CARPETA := "user://construccion"
 const CARPETA_INVENTARIO := "user://inventario"
@@ -563,6 +564,11 @@ func _difundir_pincel(idx: int, centro: Vector3, radio: float, fuerza: float, dt
 	rpc("_pincel_remoto", idx, centro, radio, fuerza, dt, herramienta, delta)
 
 
+## Cubo de tokens del pincel, por peer remitente: freno de ritmo de
+## _solicitar_pincel (H6/M21). Sin token no se aplica ni se retransmite.
+var _cubo_pincel: Dictionary = {}
+
+
 @rpc("any_peer", "call_remote", "reliable")
 func _solicitar_pincel(idx: int, centro: Vector3, radio: float, fuerza: float, dt: float,
 		herramienta: int, delta: Vector3) -> void:
@@ -572,8 +578,31 @@ func _solicitar_pincel(idx: int, centro: Vector3, radio: float, fuerza: float, d
 	if not _validar_remitente(idx, remitente):
 		_avisar_remoto(remitente, "No puedes esculpir el terreno de otra isla.")
 		return
+	# Validacion de la entrada remota (H6/M21): lo no finito se descarta
+	# entero, nunca se aplica ni se retransmite, y la herramienta debe
+	# ser una de las de TerrenoEditable; el resto se acota a los rangos
+	# que la propia casa ya usa y se frena el ritmo por peer.
+	if (not ValRed.vec3_es_finito(centro) or not ValRed.vec3_es_finito(delta)
+			or not ValRed.es_finito(radio) or not ValRed.es_finito(fuerza)
+			or not ValRed.es_finito(dt) or herramienta < ValRed.HERRAMIENTA_MIN
+			or herramienta > ValRed.HERRAMIENTA_MAX):
+		return
+	radio = ValRed.acotar_f(radio, ValRed.RADIO_PINCEL_MIN, ValRed.RADIO_PINCEL_MAX)
+	fuerza = ValRed.acotar_f(fuerza, ValRed.FUERZA_PINCEL_MIN, ValRed.FUERZA_PINCEL_MAX)
+	dt = ValRed.acotar_f(dt, 0.0, ValRed.DT_PINCEL_MAX)
+	# El centro viaja en coordenadas de mundo y las islas forman una
+	# rejilla (ChunkManager): se acota respecto al centro de la isla
+	# destino, nunca respecto al origen del mundo.
+	var isla_pincel = _islas.get(idx)
+	if isla_pincel != null:
+		var origen_isla: Vector3 = (isla_pincel as Node3D).global_position
+		centro.x = ValRed.acotar_f(centro.x, origen_isla.x - RADIO_ISLA, origen_isla.x + RADIO_ISLA)
+		centro.z = ValRed.acotar_f(centro.z, origen_isla.z - RADIO_ISLA, origen_isla.z + RADIO_ISLA)
 	var terreno = _terrenos.get(idx)
 	if terreno == null:
+		return
+	if not ValRed.cubo_intentar(_cubo_pincel, remitente, ValRed.CUBO_PINCEL_CAPACIDAD,
+			ValRed.CUBO_PINCEL_RECARGA, Time.get_ticks_msec() / 1000.0):
 		return
 	terreno.aplicar_pincel(centro, radio, fuerza, dt, herramienta, delta)
 	_colision_pendiente[idx] = true
@@ -729,16 +758,27 @@ func _host_crear_prim(idx: int, tipo: String, pos: Vector3, rot: Vector3, esc: V
 		color: Color, params := {}) -> int:
 	if not _prims.has(idx):
 		return 0
+	if _prims[idx].size() >= ValRed.PRIMS_MAX_POR_ISLA:
+		return 0
+	# Entrada remota hostil: lo no finito se descarta entero, nunca se aplica.
+	if (not ValRed.vec3_es_finito(pos) or not ValRed.vec3_es_finito(rot)
+			or not ValRed.vec3_es_finito(esc) or not ValRed.color_es_finito(color)):
+		return 0
+	pos = ValRed.acotar_vec3(pos, Vector3(-RADIO_ISLA, 0.0, -RADIO_ISLA),
+			Vector3(RADIO_ISLA, 140.0, RADIO_ISLA))
 	var antes := _instantanea_prims(idx)
 	var id := int(_siguiente.get(idx, 1))
 	_siguiente[idx] = id + 1
 	var tipo_final := tipo if Prims.es_tipo_valido(tipo) else "cubo"
+	var escala_ok := esc.clamp(
+			Vector3(ValRed.ESCALA_MIN, ValRed.ESCALA_MIN, ValRed.ESCALA_MIN),
+			Vector3(ValRed.ESCALA_MAX, ValRed.ESCALA_MAX, ValRed.ESCALA_MAX))
 	var datos := {
 		"id": id,
 		"tipo": tipo_final,
 		"pos": pos,
 		"rot": rot,
-		"escala": esc.clamp(Vector3(0.15, 0.15, 0.15), Vector3(40.0, 40.0, 40.0)),
+		"escala": escala_ok,
 		"color": color,
 	}
 	if tipo_final == Prims.TIPO_VOXEL:
@@ -759,6 +799,10 @@ func _difundir_prim_creado(idx: int, id: int) -> void:
 			d.get("params", {}))
 
 
+# Cubo de tokens del rez, por peer remitente (ver ValidacionRed).
+var _cubo_rez: Dictionary = {}
+
+
 @rpc("any_peer", "call_remote", "reliable")
 func _solicitar_rez(idx: int, tipo: String, pos: Vector3, rot: Vector3, esc: Vector3,
 		color: Color, params: Dictionary) -> void:
@@ -768,9 +812,12 @@ func _solicitar_rez(idx: int, tipo: String, pos: Vector3, rot: Vector3, esc: Vec
 	if not _validar_remitente(idx, remitente):
 		_avisar_remoto(remitente, "No puedes construir en otra isla.")
 		return
+	if not ValRed.cubo_intentar(_cubo_rez, remitente, ValRed.CUBO_REZ_CAPACIDAD,
+			ValRed.CUBO_REZ_RECARGA, Time.get_ticks_msec() / 1000.0):
+		return
 	var id := _host_crear_prim(idx, tipo, pos, rot, esc, color, params)
-	if id > 0 and not multiplayer.get_peers().is_empty():
-		rpc("_prim_creado", idx, id, tipo, pos, rot, esc, color, params)
+	# Se difunde lo ALMACENADO (ya acotado por el anfitrión), no lo crudo.
+	_difundir_prim_creado(idx, id)
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -876,6 +923,17 @@ func _solicitar_prim(idx: int, id: int, pos: Vector3, rot: Vector3, esc: Vector3
 	if not _validar_remitente(idx, remitente):
 		_avisar_remoto(remitente, "No puedes editar objetos de otra isla.")
 		return
+	# Validacion H6/M21: igual que en la creacion, lo no finito se descarta
+	# entero y posicion/escala se acotan a los rangos de la casa antes de
+	# aplicar y de retransmitir (la retransmision usa estos valores).
+	if (not ValRed.vec3_es_finito(pos) or not ValRed.vec3_es_finito(rot)
+			or not ValRed.vec3_es_finito(esc) or not ValRed.color_es_finito(color)):
+		return
+	pos = ValRed.acotar_vec3(pos, Vector3(-RADIO_ISLA, 0.0, -RADIO_ISLA),
+			Vector3(RADIO_ISLA, 140.0, RADIO_ISLA))
+	esc = ValRed.acotar_vec3(esc,
+			Vector3(ValRed.ESCALA_MIN, ValRed.ESCALA_MIN, ValRed.ESCALA_MIN),
+			Vector3(ValRed.ESCALA_MAX, ValRed.ESCALA_MAX, ValRed.ESCALA_MAX))
 	if not _aplicar_cambio_red(idx, id, pos, rot, esc, color):
 		return
 	for peer in multiplayer.get_peers():
@@ -889,6 +947,16 @@ func _prim_actualizado(idx: int, id: int, pos: Vector3, rot: Vector3, esc: Vecto
 
 
 func _aplicar_cambio_red(idx: int, id: int, pos: Vector3, rot: Vector3, esc: Vector3, color: Color) -> bool:
+	# Guarda H6/M21 en el embudo: ni el anfitrion ni un cliente aplican
+	# valores no finitos ni fuera de los rangos de la casa.
+	if (not ValRed.vec3_es_finito(pos) or not ValRed.vec3_es_finito(rot)
+			or not ValRed.vec3_es_finito(esc) or not ValRed.color_es_finito(color)):
+		return false
+	pos = ValRed.acotar_vec3(pos, Vector3(-RADIO_ISLA, 0.0, -RADIO_ISLA),
+			Vector3(RADIO_ISLA, 140.0, RADIO_ISLA))
+	esc = ValRed.acotar_vec3(esc,
+			Vector3(ValRed.ESCALA_MIN, ValRed.ESCALA_MIN, ValRed.ESCALA_MIN),
+			Vector3(ValRed.ESCALA_MAX, ValRed.ESCALA_MAX, ValRed.ESCALA_MAX))
 	var datos: Dictionary = _prims.get(idx, {}).get(id, {})
 	if datos.is_empty():
 		return false

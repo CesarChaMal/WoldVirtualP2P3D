@@ -4,8 +4,11 @@ extends Node3D
 ## un clon con el avatar humanoide hm1 (idle/andar/correr/aire).
 
 const SYNC_INTERVAL := 0.1
+## Espera minima entre cambios de avatar aceptados de un mismo peer (H6/M21).
+const AVATAR_ESPERA_MS := 2000
 const AVATAR_SCENE: PackedScene = preload("res://ESCENAS/sceneOPTM/constructor/UA/UserAnimados/Import_UserAnimados/ctr_tscn_userBS/scenesconstr/userbaseh1.tscn")
 const Pers = preload("res://gdscrip/Personalizacion.gd")
+const ValRed = preload("res://gdscrip/ValidacionRed.gd")
 
 var _userbase: CharacterBody3D = null
 var _gestor: Node = null
@@ -17,6 +20,7 @@ var _pers: Dictionary = {} # peer_id(int) -> aspecto codificado
 var _mi_pers := ""
 var _nick := ""
 var _timer := 0.0
+var _avatar_t: Dictionary = {} # peer_id(int) -> int ms del ultimo cambio de avatar aceptado
 
 func _ready() -> void:
 	_gestor = get_parent()
@@ -72,6 +76,7 @@ func _clear_all_proxies() -> void:
 	_estados.clear()
 	_rutas.clear()
 	_pers.clear()
+	_avatar_t.clear()
 
 func _remove_proxy(id: int) -> void:
 	# Se elimina el avatar pero la isla queda (la conserva TeleportManager).
@@ -82,6 +87,7 @@ func _remove_proxy(id: int) -> void:
 		_estados.erase(id)
 		_rutas.erase(id)
 		_pers.erase(id)
+		_avatar_t.erase(id)
 
 func _ensure_proxy(id: int, scene_path: String = "", pers: String = "") -> void:
 	if id == multiplayer.get_unique_id():
@@ -139,14 +145,35 @@ func _ensure_proxy(id: int, scene_path: String = "", pers: String = "") -> void:
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	root.add_child(label)
 
+## Freno H6/M21: un cambio de avatar por peer se acepta como maximo cada
+## AVATAR_ESPERA_MS; los intermedios se ignoran (se mantiene la ruta vigente)
+## para que un peer no fuerce reconstruir su clon hasta 10 veces por segundo.
+## El primer avatar de un peer se acepta siempre (aun no hay sello previo).
+func _ruta_avatar_validada(sender: int, pedida: String) -> String:
+	var vigente := str(_rutas.get(sender, ""))
+	if pedida == "" or pedida == vigente:
+		return pedida
+	var ahora := Time.get_ticks_msec()
+	if _avatar_t.has(sender) and ahora - int(_avatar_t[sender]) < AVATAR_ESPERA_MS:
+		return vigente
+	_avatar_t[sender] = ahora
+	return pedida
+
+
 @rpc("any_peer", "unreliable")
 func _net_position(pos: Vector3, rot_y: float, nick: String, estado: int, avatar_path: String = "", pers: String = "") -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	if sender == 0:
 		return
-	_ensure_proxy(sender, avatar_path, pers)
+	# Validacion H6/M21: un paquete con valores no finitos se descarta entero;
+	# un NaN en la posicion se replicaria por el grafo de escena.
+	if not ValRed.vec3_es_finito(pos) or not ValRed.es_finito(rot_y):
+		return
+	var ruta_efectiva := _ruta_avatar_validada(sender, avatar_path)
+	var nick_ok := nick.left(ValRed.NICK_MAX)
+	_ensure_proxy(sender, ruta_efectiva, pers)
 	_targets[sender] = pos
-	_estados[sender] = estado
+	_estados[sender] = clampi(estado, 0, 3)
 	var proxy: Node3D = _proxies.get(sender)
 	if proxy == null:
 		return
@@ -156,7 +183,7 @@ func _net_position(pos: Vector3, rot_y: float, nick: String, estado: int, avatar
 	proxy.rotation.y = rot_y
 	var label := proxy.get_node_or_null("NickLabel") as Label3D
 	if label:
-		label.text = nick if nick != "" else ("Jugador %d" % sender)
+		label.text = nick_ok if nick_ok != "" else ("Jugador %d" % sender)
 		label.position.y = Pers.altura_total(proxy) + 0.18
 
 
