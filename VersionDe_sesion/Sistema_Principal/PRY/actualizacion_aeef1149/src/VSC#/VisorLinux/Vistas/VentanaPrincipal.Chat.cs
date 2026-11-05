@@ -107,6 +107,10 @@ namespace Visor3D.Linux.Vistas
 
             try
             {
+                // G1: el relay y el portal comparten el token de sesión del
+                // anfitrión; se adopta en el helper compartido antes de arrancar
+                // para que el relay ya nazca exigiendo esa credencial.
+                TokenSesionChat.Establecer(_portal.TokenInvitacion);
                 _relay = new ChatRelayServer();
                 _relay.Log += mensaje => VisorLog.Info($"[chat] {mensaje}");
                 bool ok = _relay.Start(8920, 10);
@@ -192,8 +196,14 @@ namespace Visor3D.Linux.Vistas
             }
 
             // IP de la red local: el relay del anfitrión escucha en 8920.
+            // G1: si el destino trae la invitación, viaja en la URL del
+            // handshake para que el relay autentique al conectar.
             if (LanzadorMundo.TryParsearDestino(destino, out string host, out _))
-                return $"ws://{host}:8920/chat";
+            {
+                string token = LanzadorMundo.ExtraerInvitacion(destino);
+                string consulta = token.Length == 0 ? "" : $"?invitacion={Uri.EscapeDataString(token)}";
+                return $"ws://{host}:8920/chat{consulta}";
+            }
 
             return $"ws://127.0.0.1:{puertoLocal}/chat";
         }

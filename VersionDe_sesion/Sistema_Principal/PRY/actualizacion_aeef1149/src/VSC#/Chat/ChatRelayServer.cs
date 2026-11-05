@@ -24,12 +24,22 @@ namespace Visor3D.Chat
         private const string WsGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
         private const int MaxCabeceraHttp = 16 * 1024;
 
+        // Autenticación del relé (Etapa 1, G1): plazo tras el handshake para
+        // presentar el token de sesión y código de cierre si no se presenta.
+        private static readonly TimeSpan PlazoAutenticacion = TimeSpan.FromSeconds(5);
+        private const ushort CodigoCierreSinAuth = 1008;
+
+        private string _tokenSesion = "";
+
         private readonly object _gate = new();
         private readonly List<Cliente> _clientes = new();
         private TcpListener? _listener;
         private CancellationTokenSource? _cts;
         private int _siguienteId = 1;
         private bool _disposed;
+
+        /// <summary>Token de sesión que el relay exige tras el handshake (G1).</summary>
+        public string TokenSesion => _tokenSesion;
 
         public int Port { get; private set; }
         public bool IsRunning { get { lock (_gate) return _listener != null; } }
@@ -42,6 +52,9 @@ namespace Visor3D.Chat
             lock (_gate)
             {
                 if (_disposed || _listener != null) return _listener != null;
+
+                // El token nace con la sesión del anfitrión y vive solo en memoria.
+                _tokenSesion = TokenSesionChat.Actual;
 
                 for (int p = puertoPreferido; p < puertoPreferido + intentos; p++)
                 {
@@ -130,15 +143,20 @@ namespace Visor3D.Chat
                         return;
                     }
 
-                    lock (_gate)
+                    // G1: el cliente aún no se registra; solo entra en la lista
+                    // cuando su token de sesión ha sido verificado.
+                    cliente = new Cliente
                     {
-                        cliente = new Cliente
-                        {
-                            Id = _siguienteId++,
-                            Tcp = tcp,
-                            Stream = stream
-                        };
-                        _clientes.Add(cliente);
+                        Id = _siguienteId++,
+                        Tcp = tcp,
+                        Stream = stream
+                    };
+
+                    string? tokenRuta = ExtraerTokenDeRuta(cabecera);
+                    if (tokenRuta != null && EsTokenValido(tokenRuta))
+                    {
+                        if (!RegistrarCliente(cliente)) return;
+                        cliente.Autenticado = true;
                     }
 
                     await BucleClienteAsync(cliente, ct);
@@ -157,13 +175,23 @@ namespace Visor3D.Chat
 
         private async Task BucleClienteAsync(Cliente c, CancellationToken ct)
         {
+            // G1: la lectura sin autenticar caduca al vencer el plazo de gracia.
+            using var plazoAuth = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            plazoAuth.CancelAfter(PlazoAutenticacion);
+
             MemoryStream? fragmentado = null;
             int opcodeFragmentado = 0;
 
             while (!ct.IsCancellationRequested)
             {
-                Marco? marco = await LeerMarcoAsync(c.Stream, ct);
-                if (marco == null) return;
+                Marco? marco = await LeerMarcoAsync(c.Stream, c.Autenticado ? ct : plazoAuth.Token);
+                if (marco == null)
+                {
+                    // Plazo vencido sin trama: se intenta el cierre 1008 igual
+                    // que en el resto de rechazos antes de soltar el TCP (G1).
+                    if (!c.Autenticado) await CerrarSinAuthAsync(c, ct);
+                    return;
+                }
 
                 switch (marco.Opcode)
                 {
@@ -217,6 +245,15 @@ namespace Visor3D.Chat
 
         private async Task<bool> ProcesarMensajeAsync(Cliente c, int opcode, byte[] payload, CancellationToken ct)
         {
+            if (!c.Autenticado)
+            {
+                // Sin auth no se registra ni se retransmite nada (G1).
+                if (opcode == 0x1)
+                    return await ProcesarAutenticacionAsync(c, payload, ct);
+                await CerrarSinAuthAsync(c, ct);
+                return false;
+            }
+
             if (opcode == 0x1)
                 return await ProcesarTextoAsync(c, payload, ct);
 
@@ -238,6 +275,12 @@ namespace Visor3D.Chat
             {
                 if (!doc.RootElement.TryGetProperty("t", out var tipoProp)) return true;
                 string tipo = tipoProp.GetString() ?? "";
+
+                if (tipo == "auth")
+                {
+                    // Ya autenticado (p. ej. por la inyección del proxy): se ignora.
+                    return true;
+                }
 
                 if (tipo == "hello")
                 {
@@ -323,6 +366,90 @@ namespace Visor3D.Chat
             }
 
             return true;
+        }
+
+        private async Task<bool> ProcesarAutenticacionAsync(Cliente c, byte[] payload, CancellationToken ct)
+        {
+            string? token = null;
+            try
+            {
+                using var doc = JsonDocument.Parse(payload);
+                if (doc.RootElement.TryGetProperty("t", out var tipoProp) &&
+                    tipoProp.GetString() == "auth" &&
+                    doc.RootElement.TryGetProperty("token", out var tokenProp))
+                    token = tokenProp.GetString();
+            }
+            catch { }
+
+            if (token == null || !EsTokenValido(token) || !RegistrarCliente(c))
+            {
+                await CerrarSinAuthAsync(c, ct);
+                return false;
+            }
+
+            c.Autenticado = true;
+            await EnviarFrameAsync(c, 0x1, ChatProtocol.TextFrame(new { t = "auth_ok" }), ct);
+            return true;
+        }
+
+        private bool RegistrarCliente(Cliente c)
+        {
+            lock (_gate)
+            {
+                if (_clientes.Contains(c)) return true;
+                if (_clientes.Count >= ChatProtocol.MaxClients) return false;
+                _clientes.Add(c);
+                return true;
+            }
+        }
+
+        private bool EsTokenValido(string? token)
+        {
+            if (string.IsNullOrWhiteSpace(token)) return false;
+            return CoincideToken(token, _tokenSesion) || TokenSesionChat.EsValido(token);
+        }
+
+        private static bool CoincideToken(string token, string? esperado)
+        {
+            if (string.IsNullOrEmpty(esperado)) return false;
+            byte[] a = Encoding.UTF8.GetBytes(token);
+            byte[] b = Encoding.UTF8.GetBytes(esperado);
+            return a.Length == b.Length && CryptographicOperations.FixedTimeEquals(a, b);
+        }
+
+        private async Task CerrarSinAuthAsync(Cliente c, CancellationToken ct)
+        {
+            Log?.Invoke("Chat: cliente cerrado por falta de autenticación (G1).");
+            try
+            {
+                await EnviarFrameAsync(c, 0x1,
+                    ChatProtocol.TextFrame(new { t = "auth_fail", text = "Autenticación requerida" }), ct);
+                byte[] cierre = new byte[2];
+                BinaryPrimitives.WriteUInt16BigEndian(cierre, CodigoCierreSinAuth);
+                await EnviarFrameAsync(c, 0x8, cierre, ct);
+            }
+            catch { }
+        }
+
+        private static string? ExtraerTokenDeRuta(string cabecera)
+        {
+            string[] lineas = cabecera.Split("\r\n");
+            if (lineas.Length == 0) return null;
+            string[] peticion = lineas[0].Split(' ');
+            if (peticion.Length < 2) return null;
+            string ruta = peticion[1];
+            int q = ruta.IndexOf('?');
+            if (q < 0) return null;
+            foreach (string par in ruta[(q + 1)..].Split('&'))
+            {
+                int eq = par.IndexOf('=');
+                if (eq <= 0) continue;
+                string nombre = par[..eq];
+                if (nombre.Equals("token", StringComparison.OrdinalIgnoreCase) ||
+                    nombre.Equals("invitacion", StringComparison.OrdinalIgnoreCase))
+                    return Uri.UnescapeDataString(par[(eq + 1)..]);
+            }
+            return null;
         }
 
         private async Task<bool> ProcesarSolicitudAmistadAsync(
@@ -855,6 +982,7 @@ namespace Visor3D.Chat
             public string Name = "";
             public string Uid = "";
             public bool Anunciado;
+            public bool Autenticado;
             public bool Audio;
             public bool Video;
             public TcpClient Tcp = null!;

@@ -195,9 +195,15 @@ namespace Visor3D.Services
         /// reenvía handshakes que la traen en <c>?invitacion=</c>, de modo que
         /// conocer la URL del portal no basta para entrar en el mundo. Un invitado
         /// adopta el token del anfitrión raíz para poder re-alojar tras una migración.
+        /// Es la misma credencial que autentica ante el relay de chat: vive en
+        /// TokenSesionChat (única copia en memoria del proceso); esta propiedad
+        /// solo la lee y, al asignar, la adopta en ese helper compartido.
         /// </summary>
-        public string TokenInvitacion { get; set; } =
-            Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+        public string TokenInvitacion
+        {
+            get => Visor3D.Chat.TokenSesionChat.Actual;
+            set => Visor3D.Chat.TokenSesionChat.Establecer(value);
+        }
 
         // La página y los estáticos NO se limitan: solo /api/* y /descargar.
         private static readonly RateLimiter _limiteApi = new();
@@ -711,7 +717,11 @@ namespace Visor3D.Services
                             ctx.Response.Close();
                             return;
                         }
-                        await ProxyWebSocketAsync(ctx, $"ws://localhost:{ChatLocalPort}/chat");
+                        // El relay exige el token de la sesión: el proxy lo inyecta
+                        // como ?token= al abrir contra el relay. El cliente de túnel
+                        // ya acreditó su invitación ante este WebNodo (arriba) y no
+                        // maneja otra credencial: es el mismo valor de sesión.
+                        await ProxyWebSocketAsync(ctx, $"ws://localhost:{ChatLocalPort}/chat?token={TokenInvitacion}");
                     }
                     else
                     {
