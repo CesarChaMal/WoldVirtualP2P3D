@@ -162,6 +162,34 @@ namespace Visor3D.Services
         private static readonly string _apiToken =
             Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
 
+        // Marcador de proxy de confianza (H2): cabecera que solo puede escribir
+        // este proxy TCP al reenviar hacia el HttpListener interno. El valor es
+        // aleatorio por proceso, vive solo en memoria, nunca sale del equipo y
+        // no consta en el repositorio: sin este marcador, ObtenerIpCliente no
+        // debe fiarse de X-Forwarded-For ni de CF-Connecting-IP.
+        internal const string CabeceraMarcadorProxy = "X-Wold-Proxy";
+        private static readonly string _valorMarcadorProxy =
+            Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+
+        // Cabeceras que un cliente puede intentar suplantar y que el proxy
+        // siempre elimina antes de escribir las suyas.
+        private static readonly Regex _cabecerasSuplantables = new(
+            @"(?:\r\n|\n)[ \t]*(?:X-Forwarded-For|CF-Connecting-IP|X-Wold-Proxy)[ \t]*:[^\r\n]*",
+            RegexOptions.IgnoreCase);
+
+        /// <summary>
+        /// Verdadero solo si el valor recibido es el marcador que este mismo
+        /// proceso generó al arrancar. Comparación en tiempo fijo.
+        /// </summary>
+        internal static bool EsMarcadorProxyValido(string? valor)
+        {
+            if (string.IsNullOrEmpty(valor)) return false;
+            var recibido = Encoding.UTF8.GetBytes(valor.Trim());
+            var esperado = Encoding.UTF8.GetBytes(_valorMarcadorProxy);
+            return recibido.Length == esperado.Length &&
+                   CryptographicOperations.FixedTimeEquals(recibido, esperado);
+        }
+
         /// <summary>
         /// Credencial de la sesión P2P. El proxy WebSocket (motor y chat) solo
         /// reenvía handshakes que la traen en <c>?invitacion=</c>, de modo que
@@ -454,6 +482,18 @@ namespace Visor3D.Services
                     await target.ConnectAsync(IPAddress.Loopback, _internalPort, token).ConfigureAwait(false);
                     target.NoDelay = true;
 
+                    // IP real observada en el socket aceptado: es la única que
+                    // el proxy declara como IP del cliente al reenviar.
+                    string? ipRealProxy = null;
+                    try
+                    {
+                        var direccion = (client.Client.RemoteEndPoint as IPEndPoint)?.Address;
+                        if (direccion != null && direccion.IsIPv4MappedToIPv6)
+                            direccion = direccion.MapToIPv4();
+                        ipRealProxy = direccion?.ToString();
+                    }
+                    catch { }
+
                     using NetworkStream clientStream = client.GetStream();
                     using NetworkStream targetStream = target.GetStream();
 
@@ -495,6 +535,7 @@ namespace Visor3D.Services
                                 headersStr += $"\r\nHost: {HostInterno}:{_internalPort}";
                             }
 
+                            headersStr = ReescribirCabecerasDelProxy(headersStr, ipRealProxy);
                             byte[] headerBytes = Encoding.UTF8.GetBytes(headersStr);
                             await targetStream.WriteAsync(headerBytes, 0, headerBytes.Length, token).ConfigureAwait(false);
                             await targetStream.WriteAsync(separator, 0, separator.Length, token).ConfigureAwait(false);
@@ -518,6 +559,25 @@ namespace Visor3D.Services
                 }
                 catch { }
             }
+        }
+
+        /// <summary>
+        /// Sanea las cabeceras que el proxy reenvía al HttpListener interno:
+        /// elimina cualquier X-Forwarded-For, CF-Connecting-IP o marcador de
+        /// proxy traídos por el cliente y escribe, en su lugar, la IP real
+        /// observada en el socket como único X-Forwarded-For (sin encadenar
+        /// valor alguno del cliente) junto al marcador de proxy de confianza.
+        /// CF-Connecting-IP no se reescribe: desaparece, porque la fuente
+        /// autorizada de la IP del cliente pasa a ser X-Forwarded-For con
+        /// marcador.
+        /// </summary>
+        private static string ReescribirCabecerasDelProxy(string cabeceras, string? ipReal)
+        {
+            string limpias = _cabecerasSuplantables.Replace(cabeceras, "");
+            if (!string.IsNullOrWhiteSpace(ipReal))
+                limpias += $"\r\nX-Forwarded-For: {ipReal.Trim()}";
+            limpias += $"\r\n{CabeceraMarcadorProxy}: {_valorMarcadorProxy}";
+            return limpias;
         }
 
         private static int FindBytes(byte[] src, byte[] pattern)
@@ -823,23 +883,45 @@ namespace Visor3D.Services
         }
 
         /// <summary>
-        /// IP real del cliente. Detrás del túnel la conexión llega de loopback, así que
-        /// se usa CF-Connecting-IP / X-Forwarded-For solo en ese caso.
+        /// IP real del cliente para el limitador (H2). Orden de decisión:
+        /// 1) Conexión directa (socket no loopback): manda la IP del socket
+        ///    y las cabeceras se ignoran siempre.
+        /// 2) Socket loopback sin el marcador del proxy de confianza, o con
+        ///    un marcador distinto: las cabeceras pueden venir del cliente,
+        ///    así que se ignoran y manda la IP del socket (todo ese tráfico
+        ///    comparte el cubo loopback: fail-closed).
+        /// 3) Socket loopback con marcador válido: el proxy ya sobrescribió
+        ///    X-Forwarded-For con la IP observada en su socket, así que se
+        ///    usa su primer valor si analiza como IP válida.
+        /// CF-Connecting-IP ya no se lee aquí: el proxy lo elimina al
+        /// reenviar y la única fuente autorizada pasa a ser el
+        /// X-Forwarded-For marcado. Nota: tras un túnel público el proxy
+        /// observa al demonio local del túnel (loopback), así que los
+        /// invitados del túnel comparten el cubo 127.0.0.1; es la opción
+        /// fail-closed elegida en H2: no se adopta ninguna cabecera fijada
+        /// fuera de este proceso.
         /// </summary>
         private static string ObtenerIpCliente(HttpListenerRequest req)
         {
             try
             {
                 var remoto = req.RemoteEndPoint?.Address;
-                if (remoto != null && IPAddress.IsLoopback(remoto))
-                {
-                    string? cf = req.Headers["CF-Connecting-IP"];
-                    if (!string.IsNullOrWhiteSpace(cf)) return cf.Trim();
+                if (remoto == null) return "desconocida";
+                if (remoto.IsIPv4MappedToIPv6) remoto = remoto.MapToIPv4();
 
-                    string? xff = req.Headers["X-Forwarded-For"];
-                    if (!string.IsNullOrWhiteSpace(xff)) return xff.Split(',')[0].Trim();
+                if (!IPAddress.IsLoopback(remoto)) return remoto.ToString();
+
+                if (!EsMarcadorProxyValido(req.Headers[CabeceraMarcadorProxy]))
+                    return remoto.ToString();
+
+                string? xff = req.Headers["X-Forwarded-For"];
+                if (!string.IsNullOrWhiteSpace(xff) &&
+                    IPAddress.TryParse(xff.Split(',')[0].Trim(), out var declarada))
+                {
+                    if (declarada.IsIPv4MappedToIPv6) declarada = declarada.MapToIPv4();
+                    return declarada.ToString();
                 }
-                return remoto?.ToString() ?? "desconocida";
+                return remoto.ToString();
             }
             catch
             {
