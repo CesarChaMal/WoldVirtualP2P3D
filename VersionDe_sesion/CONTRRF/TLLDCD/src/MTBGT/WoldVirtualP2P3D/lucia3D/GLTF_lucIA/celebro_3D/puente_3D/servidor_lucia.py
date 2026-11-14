@@ -136,16 +136,25 @@ def _cargar_puente():
     """Carga el puente de comandos de LucIA (STMGNRL) si está disponible.
 
     El servidor vive dentro del proyecto Godot, así que se sube por los
-    directorios hasta encontrar ``STMGNRL/mainLCSTM.py`` en vez de fiarse de
-    una profundidad fija.
+    directorios hasta encontrar ``STMGNRL/SistemaGeneral/mainLCSTM.py``
+    (configuración actual de TLLDCD/src) en vez de fiarse de una profundidad
+    fija.
     """
+    src_dir = None
     for base in Path(__file__).resolve().parents:
-        if (base / "STMGNRL" / "mainLCSTM.py").is_file():
-            if str(base) not in sys.path:
-                sys.path.insert(0, str(base))
+        if (base / "STMGNRL" / "SistemaGeneral" / "mainLCSTM.py").is_file():
+            src_dir = base
             break
+        if (base / "STMGNRL" / "mainLCSTM.py").is_file():
+            src_dir = base
+            break
+
+    if src_dir is not None and str(src_dir) not in sys.path:
+        sys.path.insert(0, str(src_dir))
+        os.environ.setdefault("WVP_SRC_DIR", str(src_dir))
+
     try:
-        from VersionDe_sesion.CONTRRF.TLLDCD.src.STMGNRL.SistemaGeneral.mainLCSTM import LucIAPuenteComandos
+        from STMGNRL.SistemaGeneral.mainLCSTM import LucIAPuenteComandos
 
         return LucIAPuenteComandos()
     except Exception as error:

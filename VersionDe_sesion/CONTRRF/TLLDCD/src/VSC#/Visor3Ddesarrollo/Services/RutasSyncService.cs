@@ -9,8 +9,8 @@ namespace Visor3D.Services
 {
     /// <summary>
     /// Sincroniza automáticamente las rutas Python del proyecto al arrancar el visor.
-    /// Llama al motor de sincronización en STM_HRTS (sincronizar_rutas.py) usando
-    /// el intérprete Python embebido en src\LC_STM\python\python.exe.
+    /// Ejecuta el motor de sincronización de STM_HRTS sobre el árbol vivo
+    /// (TLLDCD/src) usando el Python resuelto por <see cref="RutasVisor"/>.
     ///
     /// Se llama desde App.xaml.cs durante el arranque, antes de mostrar la ventana
     /// principal. La operación es asíncrona y fire-and-forget: si falla no bloquea
@@ -18,9 +18,6 @@ namespace Visor3D.Services
     /// </summary>
     public static class RutasSyncService
     {
-        // Ruta relativa del intérprete Python embebido desde la raíz del repositorio
-        private const string PythonRelPath = @"LC_STM\python\python.exe";
-
         // Tiempo máximo de espera antes de cancelar la sincronización (ms)
         private const int TimeoutMs = 15_000;
 
@@ -59,45 +56,8 @@ namespace Visor3D.Services
             });
         }
 
-        /// <summary>
-        /// Busca el intérprete Python embebido subiendo por los directorios padre
-        /// desde la ubicación del ejecutable, con el mismo patrón que GodotConfig.
-        /// </summary>
-        private static string? EncontrarPythonExe()
-        {
-            // 1. Variable de entorno de override (útil para tests / CI)
-            string? envPy = Environment.GetEnvironmentVariable("WOLDVIRTUAL_PYTHON_EXE");
-            if (!string.IsNullOrWhiteSpace(envPy) && File.Exists(envPy))
-                return envPy;
-
-            string? current = Path.GetDirectoryName(
-                Process.GetCurrentProcess().MainModule?.FileName
-                ?? AppDomain.CurrentDomain.BaseDirectory);
-
-            // 2. Subir hasta 10 niveles buscando LC_STM\python\python.exe
-            for (int i = 0; i < 10 && current != null; i++)
-            {
-                string candidate = Path.Combine(current, PythonRelPath);
-                if (File.Exists(candidate)) return candidate;
-
-                // También bajo src/
-                string withSrc = Path.Combine(current, "src", PythonRelPath);
-                if (File.Exists(withSrc)) return withSrc;
-
-                current = Directory.GetParent(current)?.FullName;
-            }
-
-            // 3. Rutas absolutas de desarrollo (E: y C:)
-            string[] rutas =
-            {
-                @"E:\WoldVirtualP2P3D\VersionDe_sesion\Sistema_Principal\PRY\actualizacion_c5074e3b\src\" + PythonRelPath,
-                @"C:\Users\User\Desktop\WoldVirtualP2P3D\VersionDe_sesion\Sistema_Principal\PRY\actualizacion_c5074e3b\src\" + PythonRelPath,
-            };
-            foreach (var r in rutas)
-                if (File.Exists(r)) return r;
-
-            return null;
-        }
+        /// <summary>Intérprete Python resuelto sobre la configuración viva.</summary>
+        private static string? EncontrarPythonExe() => RutasVisor.PythonExe;
 
         /// <summary>
         /// Ejecuta <c>python.exe -m STM_HRTS.utils.add_utils sincronizar --json</c>
@@ -111,10 +71,7 @@ namespace Visor3D.Services
                 return new ResultadoSync { Ok = false, Error = "Python embebido no encontrado." };
 
             // El módulo STM_HRTS está en src/STM_HRTS; trabajamos desde src/
-            string workDir = Path.GetDirectoryName(pythonExe)!;
-            // Subir desde LC_STM\python\ hasta src\
-            workDir = Path.Combine(workDir, "..", ".."); // → src/
-            workDir = Path.GetFullPath(workDir);
+            string workDir = RutasVisor.DirTrabajo;
 
             var psi = new ProcessStartInfo
             {
@@ -126,6 +83,7 @@ namespace Visor3D.Services
                 RedirectStandardError = true,
                 CreateNoWindow = true,
             };
+            RutasVisor.AplicarPythonPath(psi);
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeoutMs);
@@ -155,49 +113,92 @@ namespace Visor3D.Services
 
         private static ResultadoSync ParsearSalida(string stdout, string stderr, int exitCode)
         {
-            // La salida JSON tiene la forma:
-            // {"ok": true, "correctas": 19, "corregidas": 0, "mensaje": "...", "cambios": [...]}
-            if (!string.IsNullOrWhiteSpace(stdout))
+            string? json = ExtraerJson(stdout);
+            if (json != null)
             {
                 try
                 {
-                    // Extraer la primera línea JSON válida
-                    foreach (var line in stdout.Split('\n'))
+                    using var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+
+                    int correctas = Contar(root, "ok_sin_cambios", "correctas");
+                    int corregidas = Contar(root, "corregidas");
+                    int pendientes =
+                        Contar(root, "sin_candidato") +
+                        Contar(root, "ambiguas") +
+                        Contar(root, "errores");
+
+                    bool ok = !root.TryGetProperty("ok", out var okProp) ||
+                              okProp.ValueKind != JsonValueKind.False;
+                    if (pendientes > 0) ok = false;
+
+                    string mensaje = $"rutas correctas={correctas}, corregidas={corregidas}"
+                        + (pendientes > 0 ? $", pendientes={pendientes}" : "");
+
+                    return new ResultadoSync
                     {
-                        string trimmed = line.Trim();
-                        if (!trimmed.StartsWith("{")) continue;
-                        using var doc = JsonDocument.Parse(trimmed);
-                        var root = doc.RootElement;
-                        bool ok = root.TryGetProperty("ok", out var okProp) && okProp.GetBoolean();
-                        int correctas = root.TryGetProperty("correctas", out var cProp) ? cProp.GetInt32() : 0;
-                        int corregidas = root.TryGetProperty("corregidas", out var xProp) ? xProp.GetInt32() : 0;
-                        string msg = root.TryGetProperty("mensaje", out var mProp) ? mProp.GetString() ?? "" : "";
-                        return new ResultadoSync
-                        {
-                            Ok = true,
-                            Correctas = correctas,
-                            Corregidas = corregidas,
-                            Mensaje = msg,
-                        };
-                    }
+                        Ok = ok,
+                        Correctas = correctas,
+                        Corregidas = corregidas,
+                        Mensaje = mensaje,
+                        Error = ok ? null : mensaje,
+                    };
                 }
                 catch
                 {
-                    // JSON no parseable: registrar texto plano como mensaje
-                    return new ResultadoSync
-                    {
-                        Ok = exitCode == 0,
-                        Mensaje = stdout.Trim(),
-                        Error = exitCode != 0 ? (stderr.Trim().Length > 0 ? stderr.Trim() : stdout.Trim()) : null,
-                    };
+                    // JSON no parseable: registrar texto plano como mensaje.
                 }
+            }
+
+            if (!string.IsNullOrWhiteSpace(stdout))
+            {
+                return new ResultadoSync
+                {
+                    Ok = exitCode == 0,
+                    Mensaje = stdout.Trim(),
+                    Error = exitCode != 0
+                        ? (!string.IsNullOrWhiteSpace(stderr) ? stderr.Trim() : stdout.Trim())
+                        : null,
+                };
             }
 
             return new ResultadoSync
             {
                 Ok = false,
-                Error = !string.IsNullOrWhiteSpace(stderr) ? stderr.Trim() : $"Proceso terminó con código {exitCode} sin salida.",
+                Error = !string.IsNullOrWhiteSpace(stderr)
+                    ? stderr.Trim()
+                    : $"Proceso terminó con código {exitCode} sin salida.",
             };
+        }
+
+        /// <summary>Recorta la salida hasta el primer objeto JSON completo.</summary>
+        private static string? ExtraerJson(string texto)
+        {
+            if (string.IsNullOrWhiteSpace(texto)) return null;
+
+            int inicio = texto.IndexOf('{');
+            int fin = texto.LastIndexOf('}');
+            if (inicio < 0 || fin <= inicio) return null;
+
+            return texto.Substring(inicio, fin - inicio + 1);
+        }
+
+        /// <summary>Cuenta elementos de una lista JSON o lee un entero directo.</summary>
+        private static int Contar(JsonElement root, params string[] claves)
+        {
+            foreach (string clave in claves)
+            {
+                if (!root.TryGetProperty(clave, out var valor)) continue;
+
+                return valor.ValueKind switch
+                {
+                    JsonValueKind.Array => valor.GetArrayLength(),
+                    JsonValueKind.Number => valor.TryGetInt32(out int n) ? n : 0,
+                    JsonValueKind.True => 1,
+                    _ => 0,
+                };
+            }
+            return 0;
         }
     }
 }

@@ -528,7 +528,6 @@
                             </StackPanel>
                         </Button>
 
-                        <TextBlock x:Name="TxtSesionLlave" Text="Llave: ---" Foreground="#8892B0" FontSize="10.5" FontFamily="Consolas" VerticalAlignment="Center" Margin="0,0,12,0" MaxWidth="230" TextTrimming="CharacterEllipsis"/>
                         <Button x:Name="BtnCerrarSesion"
                                 Content="Cerrar Sesión"
                                 Width="95" Height="26"
@@ -922,66 +921,6 @@
                         BorderThickness="1"
                         Cursor="Hand"
                         Margin="0,0,16,0"/>
-
-                <!-- Label Usuario -->
-                <TextBlock Text="Usuario:"
-                           Foreground="#9AA0B2"
-                           FontSize="12"
-                           FontWeight="SemiBold"
-                           VerticalAlignment="Center"
-                           Margin="0,0,6,0"/>
-
-                <!-- Campo Usuario -->
-                <TextBox x:Name="TxtLoginUser"
-                         Width="130" Height="24"
-                         FontSize="12"
-                         Padding="4,2"
-                         Background="#161B26"
-                         Foreground="#E2E2E2"
-                         BorderBrush="#163B67"
-                         BorderThickness="1"
-                         CaretBrush="#00D9FF"
-                         VerticalContentAlignment="Center"/>
-
-                <TextBlock Width="14"/>
-
-                <!-- Label Contraseña -->
-                <TextBlock Text="Contraseña:"
-                           Foreground="#9AA0B2"
-                           FontSize="12"
-                           FontWeight="SemiBold"
-                           VerticalAlignment="Center"
-                           Margin="0,0,6,0"/>
-
-                <!-- Campo Contraseña -->
-                <PasswordBox x:Name="TxtLoginPass"
-                             Width="130" Height="24"
-                             FontSize="12"
-                             Padding="4,2"
-                             Background="#161B26"
-                             Foreground="#E2E2E2"
-                             BorderBrush="#163B67"
-                             BorderThickness="1"
-                             VerticalContentAlignment="Center"/>
-
-                <TextBlock Width="14"/>
-
-                <!-- Botón Iniciar Sesión -->
-                <Button x:Name="BtnLogin"
-                        Content="Iniciar Sesión"
-                        Width="105" Height="28"
-                        FontSize="11.5"
-                        FontWeight="Bold"
-                        Foreground="#FFFFFF"
-                        Background="#0F3460"
-                        BorderBrush="#163B67"
-                        BorderThickness="1"
-                        Cursor="Hand"
-                        Panel.ZIndex="1"
-                        Margin="0,0,18,0"/>
-
-                <!-- Separador visual -->
-                <Border Width="1" Height="22" Background="#163B67" Margin="0,0,14,0"/>
 
                 <!-- Estado de conexión: ya no se pega un enlace; LucIA es la anfitriona
                      y el botón Conectar valida que la sesión es alcanzable. -->
