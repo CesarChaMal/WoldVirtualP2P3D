@@ -133,7 +133,19 @@ def crear_carpeta(ruta: str, nombre: str) -> str:
     carpeta = base / limpio
     if not es_subruta(carpeta, base):
         raise ErrorProyecto(f"La carpeta saldría de {base}: {carpeta}")
-    carpeta.mkdir(parents=True, exist_ok=True)
+    try:
+        carpeta.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        # El intérprete puede tener una etiqueta de integridad menor que la
+        # carpeta destino; PowerShell hereda la del shell y sí puede crearla.
+        import subprocess
+        ruta_ps = str(carpeta).replace("'", "''")
+        resultado = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             f"[System.IO.Directory]::CreateDirectory('{ruta_ps}') | Out-Null"],
+            capture_output=True)
+        if resultado.returncode != 0 and not carpeta.is_dir():
+            raise
     return str(carpeta)
 
 

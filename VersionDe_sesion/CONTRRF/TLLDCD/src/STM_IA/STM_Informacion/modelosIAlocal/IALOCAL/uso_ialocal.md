@@ -235,3 +235,12 @@ Pregunta: [ESTADO REAL DEL SISTEMA: Tienes LC_constructor EN CONSTRUCCIÓN y ya 
 
 ## qwen2.5:7b — OK
 Pregunta: ¿teniendo  en cuenta como esta tu codigo  fuente  interno  cual es  la hoja de ruta  que manejarias?
+
+## qwen2.5:7b — OK
+Pregunta: ¿lucia como te  encuentras?
+
+## qwen2.5:7b — OK
+Pregunta: [ESTADO REAL DEL SISTEMA: Tienes LC_constructor EN CONSTRUCCIÓN y ya operativo; crea automáticamente las jerarquías src,
+
+## qwen2.5:7b — OK
+Pregunta: ¿como seguirias  mejorando ese  sistema para ser mas eficiente  y este a tu  gusto?
