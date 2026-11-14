@@ -98,22 +98,9 @@ namespace Visor3D.Services
                 string? pythonw = Path.Combine(Path.GetDirectoryName(python) ?? "", "pythonw.exe");
                 if (File.Exists(pythonw)) ejecutable = pythonw;
 
-                string bat = Path.Combine(AppContext.BaseDirectory, "Iniciar_Lucia_Visor.bat");
-                if (!File.Exists(bat))
-                    bat = @"E:\WoldVirtualP2P3D\VersionDe_sesion\CONTRRF\TLLDCD\src\VSC#\Visor3Ddesarrollo\Iniciar_Lucia_Visor.bat";
-
                 string ps1 = Path.Combine(AppContext.BaseDirectory, "Iniciar_Lucia_Visor.ps1");
-                if (!File.Exists(ps1))
-                    ps1 = @"E:\WoldVirtualP2P3D\VersionDe_sesion\CONTRRF\TLLDCD\src\VSC#\Visor3Ddesarrollo\Iniciar_Lucia_Visor.ps1";
-
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "powershell.exe",
-                    Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{ps1}\"",
-                    WorkingDirectory = Path.GetDirectoryName(ps1) ?? "",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
+                if (!File.Exists(ps1) && RutasVisor.HerraMientasDir != null)
+                    ps1 = Path.Combine(RutasVisor.HerraMientasDir, "Iniciar_Lucia_Visor.ps1");
 
                 string logHijo = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -125,6 +112,32 @@ namespace Visor3D.Services
                         $"\n=== {DateTime.Now:HH:mm:ss} python={python} script={script} exe={ejecutable}\n");
                 }
                 catch { }
+
+                ProcessStartInfo psi;
+                if (File.Exists(ps1))
+                {
+                    psi = new ProcessStartInfo
+                    {
+                        FileName = "powershell.exe",
+                        Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{ps1}\"",
+                        WorkingDirectory = Path.GetDirectoryName(ps1) ?? "",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                    };
+                }
+                else
+                {
+                    // Sin el lanzador: arrancar pythonw directamente con el script vivo.
+                    psi = new ProcessStartInfo
+                    {
+                        FileName = ejecutable,
+                        Arguments = $"\"{script}\" --modelo qwen2.5:7b --puerto {_puerto} --sin-precalentar",
+                        WorkingDirectory = Path.GetDirectoryName(script) ?? "",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                    };
+                }
+                RutasVisor.AplicarPythonPath(psi);
 
                 VisorLog.Info($"[LucIA] Arrancando cerebro: {psi.FileName} {psi.Arguments}");
                 VisorLog.Info($"[LucIA] Servidor de LucIA del visor: {script}");
@@ -203,47 +216,9 @@ namespace Visor3D.Services
             }
         }
 
-        private static string? BuscarPython()
-        {
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            string projectDir = GodotConfig.GetProjectPath();
-            string? srcDir = Directory.GetParent(Directory.GetParent(projectDir)?.FullName ?? "")?.FullName;
+        private static string? BuscarPython() => RutasVisor.PythonExe;
 
-            string[] candidatos =
-            {
-                srcDir != null ? Path.Combine(srcDir, "LC_STM", "python", "python.exe") : "",
-                @"E:\WoldVirtualP2P3D\VersionDe_sesion\Sistema_Principal\PRY\actualizacion_c5074e3b\src\LC_STM\python\python.exe",
-                Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "LC_STM", "python", "python.exe")),
-                Path.Combine(baseDir, "LC_STM", "python", "python.exe"),
-                Path.Combine(baseDir, "python", "python.exe"),
-                Environment.GetEnvironmentVariable("WVP_PYTHON") ?? "",
-            };
-
-            foreach (var candidato in candidatos)
-            {
-                if (!string.IsNullOrWhiteSpace(candidato) && File.Exists(candidato))
-                    return candidato;
-            }
-            return null;
-        }
-
-        private static string? BuscarScript()
-        {
-            string projectDir = GodotConfig.GetProjectPath();
-            string[] candidatos =
-            {
-                Path.Combine(projectDir, "lucia3D", "GLTF_lucIA", "celebro_3D", "puente_3D", "servidor_lucia.py"),
-                @"E:\WoldVirtualP2P3D\VersionDe_sesion\Sistema_Principal\PRY\actualizacion_c5074e3b\src\MTBGT\WoldVirtualP2P3D\lucia3D\GLTF_lucIA\celebro_3D\puente_3D\servidor_lucia.py",
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "celebro_3D", "puente_3D", "servidor_lucia.py"),
-            };
-
-            foreach (var candidato in candidatos)
-            {
-                if (!string.IsNullOrWhiteSpace(candidato) && File.Exists(candidato))
-                    return candidato;
-            }
-            return null;
-        }
+        private static string? BuscarScript() => RutasVisor.ServidorLucia;
 
         public void Detener()
         {

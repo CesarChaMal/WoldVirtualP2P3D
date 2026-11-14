@@ -63,7 +63,7 @@ GODOT_MODELOS: Path = GODOT_DIR / "gltfimport"
 # -------------------------------------------------------------------- visor
 
 VSC_DIR: Path = SRC_DIR / "VSC#"
-CSPROJ: Path = VSC_DIR / "Visor3D.csproj"
+CSPROJ: Path = SRC_DIR / "VSC#" / "Visor3Ddesarrollo" / "HerraMientas" / "Visor3D.csproj"
 PCK_EMBEBIDO: Path = VSC_DIR / "wvp3d.pck"
 GODOT_EXE_ZIP: Path = VSC_DIR / "godot_exe.zip"
 

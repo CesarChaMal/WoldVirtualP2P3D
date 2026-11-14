@@ -46,9 +46,22 @@
   </ItemGroup>
 
   <!--
-    Fase 0: solo estructura WPF + login.
-    El motor 3D (Godot incrustado / Silk.NET) y la red P2P se añaden en fases posteriores.
+    El .csproj vive en HerraMientas; el resto de módulos del visor están un
+    nivel arriba (Chat, Services, Seguridad...). Se incluyen explícitamente
+    para que la configuración actual de VSC#/Visor3Ddesarrollo compile como
+    un único ensamblado.
   -->
+  <ItemGroup>
+    <Compile Include="..\CargaVolatil\**\*.cs" Link="CargaVolatil\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\Chat\**\*.cs" Link="Chat\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\p2pipfsCS\**\*.cs" Link="p2pipfsCS\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\RedP2P\**\*.cs" Link="RedP2P\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\Seguridad\**\*.cs" Link="Seguridad\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\Services\**\*.cs" Link="Services\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\STM_actualizar\**\*.cs" Link="STM_actualizar\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Remove="..\**\bin\**\*.cs" />
+    <Compile Remove="..\**\obj\**\*.cs" />
+  </ItemGroup>
 
   <!-- Excluir subcarpetas que son proyectos hermanos o carpetas de descargas -->
   <ItemGroup>
@@ -92,10 +105,12 @@
 
   <!-- Recursos web (para fases posteriores y WebNodo) -->
   <ItemGroup>
-    <None Update="webnodo\public\**\*">
+    <None Include="..\webnodo\public\**\*">
+      <Link>webnodo\public\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="webnodo\fallback.py">
+    <None Include="..\webnodo\fallback.py">
+      <Link>webnodo\fallback.py</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="www\**\*">
@@ -108,29 +123,34 @@
 
   <!-- Recursos embebidos para distribución standalone en un único .exe -->
   <ItemGroup>
-    <EmbeddedResource Include="Seguridad\bip39-english.txt" />
-    <EmbeddedResource Include="webnodo\public\index.html" />
-    <EmbeddedResource Include="webnodo\public\metaverso.jpg" />
+    <EmbeddedResource Include="..\Seguridad\bip39-english.txt"
+                      LogicalName="Visor3D.Seguridad.bip39-english.txt" />
+    <EmbeddedResource Include="..\webnodo\public\index.html"
+                      LogicalName="Visor3D.webnodo.public.index.html" />
+    <EmbeddedResource Include="..\webnodo\public\metaverso.jpg"
+                      LogicalName="Visor3D.webnodo.public.metaverso.jpg" />
     <!-- Interruptor de desarrollo: -p:SkipGodotAssets=true compila la UI sin el motor ni el mundo.
          La build de distribución NO define la propiedad, así que los incluye si el fichero existe. -->
-    <EmbeddedResource Include="godot_exe.zip" Condition="Exists('godot_exe.zip') and '$(SkipGodotAssets)' != 'true'" />
+    <EmbeddedResource Include="..\godot_exe.zip"
+                      Condition="Exists('..\godot_exe.zip') and '$(SkipGodotAssets)' != 'true'"
+                      LogicalName="Visor3D.godot_exe.zip" />
     <!-- El PCK ya no se embebe suelto: viaja dentro de actualizacion_v2.8.1.zip
          (mundo/wvp3d.pck) y se monta en RAM vía VolatilePackage, evitando la
          escritura permanente en LocalAppData y la duplicación del mundo. -->
     <!-- Paquete volátil: mundo + Lucía + config. El LogicalName fija el nombre
          del recurso en memoria (Visor3D.actualizacion_volatil.zip) sea cual sea
          el nombre del fichero versionado en disco. Solo se embebe si existe. -->
-    <EmbeddedResource Include="constructor_godot.zip"
-                      Condition="Exists('constructor_godot.zip')"
+    <EmbeddedResource Include="..\constructor_godot.zip"
+                      Condition="Exists('..\constructor_godot.zip')"
                       LogicalName="Visor3D.constructor_godot.zip" />
-    <EmbeddedResource Include="actualizacion_v2.8.3.zip"
-                      Condition="Exists('actualizacion_v2.8.3.zip')"
+    <EmbeddedResource Include="..\actualizacion_v2.8.3.zip"
+                      Condition="Exists('..\actualizacion_v2.8.3.zip')"
                       LogicalName="Visor3D.actualizacion_volatil.zip" />
-    <EmbeddedResource Include="actualizacion_v2.8.2.zip"
-                      Condition="!Exists('actualizacion_v2.8.3.zip') and Exists('actualizacion_v2.8.2.zip')"
+    <EmbeddedResource Include="..\actualizacion_v2.8.2.zip"
+                      Condition="!Exists('..\actualizacion_v2.8.3.zip') and Exists('..\actualizacion_v2.8.2.zip')"
                       LogicalName="Visor3D.actualizacion_volatil.zip" />
-    <EmbeddedResource Include="actualizacion_v2.8.1.zip"
-                      Condition="!Exists('actualizacion_v2.8.3.zip') and !Exists('actualizacion_v2.8.2.zip') and Exists('actualizacion_v2.8.1.zip')"
+    <EmbeddedResource Include="..\actualizacion_v2.8.1.zip"
+                      Condition="!Exists('..\actualizacion_v2.8.3.zip') and !Exists('..\actualizacion_v2.8.2.zip') and Exists('..\actualizacion_v2.8.1.zip')"
                       LogicalName="Visor3D.actualizacion_volatil.zip" />
   </ItemGroup>
 

@@ -76,13 +76,15 @@ namespace Visor3D.Services
                 {
                     FileName = pyExe,
                     Arguments = $"\"{scriptPath}\" --puerto {_puerto} --sin-cuota-ubicacion",
-                    WorkingDirectory = Path.GetDirectoryName(scriptPath) ?? "",
+                    // cwd=src: los paquetes STM_* se importan desde la raíz del taller.
+                    WorkingDirectory = RutasVisor.DirTrabajo,
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     WindowStyle = ProcessWindowStyle.Hidden,
                     RedirectStandardOutput = false,
                     RedirectStandardError = false
                 };
+                RutasVisor.AplicarPythonPath(psi);
 
                 VisorLog.Info($"[Blockchain] Arrancando servidor oficial: {psi.FileName} {psi.Arguments}");
                 _proceso = Process.Start(psi);
@@ -196,85 +198,10 @@ namespace Visor3D.Services
             catch { }
         }
 
-        private static string? BuscarPython()
-        {
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            string projectDir = GodotConfig.GetProjectPath();
-            string? srcDir = Directory.GetParent(Directory.GetParent(projectDir)?.FullName ?? "")?.FullName;
+        // La ruta oficial vive en STM_BKCH/stm_bkch1 (Rutas.json → archivos.servidor_oficial).
+        private static string? BuscarPython() => RutasVisor.PythonExe;
 
-            string[] candidatos =
-            {
-                // 1. Python embebido en LC_STM (prioridad máxima)
-                srcDir != null ? Path.Combine(srcDir, "LC_STM", "python", "python.exe") : "",
-                Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "LC_STM", "python", "python.exe")),
-                Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "LC_STM", "python", "python.exe")),
-                @"E:\WoldVirtualP2P3D\VersionDe_sesion\Sistema_Principal\PRY\actualizacion_c5074e3b\src\LC_STM\python\python.exe",
-                Path.Combine(baseDir, "LC_STM", "python", "python.exe"),
-                Path.Combine(baseDir, "python", "python.exe"),
-                Environment.GetEnvironmentVariable("WVP_PYTHON") ?? "",
-                @"C:\Python314\python.exe",
-                @"C:\Python313\python.exe",
-                @"C:\Python312\python.exe",
-                @"C:\Python311\python.exe",
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python313", "python.exe"),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python312", "python.exe"),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python311", "python.exe"),
-            };
-
-            foreach (var c in candidatos)
-            {
-                if (!string.IsNullOrWhiteSpace(c) && File.Exists(c))
-                    return c;
-            }
-
-            // Buscar en PATH del sistema
-            try
-            {
-                var p = Process.Start(new ProcessStartInfo
-                {
-                    FileName = "where",
-                    Arguments = "python",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    CreateNoWindow = true
-                });
-                if (p != null)
-                {
-                    string salida = p.StandardOutput.ReadLine() ?? "";
-                    p.WaitForExit(1000);
-                    if (!string.IsNullOrWhiteSpace(salida) && File.Exists(salida))
-                        return salida;
-                }
-            }
-            catch { }
-
-            return null;
-        }
-
-        private static string? BuscarScriptServidor()
-        {
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            string projectDir = GodotConfig.GetProjectPath();
-            string? srcDir = Directory.GetParent(Directory.GetParent(projectDir)?.FullName ?? "")?.FullName;
-
-            string[] candidatos =
-            {
-                srcDir != null ? Path.Combine(srcDir, "STM_BKCH", "servidor_oficial.py") : "",
-                Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "STM_BKCH", "servidor_oficial.py")),
-                Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "STM_BKCH", "servidor_oficial.py")),
-                @"E:\WoldVirtualP2P3D\VersionDe_sesion\Sistema_Principal\PRY\actualizacion_c5074e3b\src\STM_BKCH\servidor_oficial.py",
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "STM_BKCH", "servidor_oficial.py"),
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "servidor_oficial.py")
-            };
-
-            foreach (var c in candidatos)
-            {
-                if (!string.IsNullOrWhiteSpace(c) && File.Exists(c))
-                    return c;
-            }
-
-            return null;
-        }
+        private static string? BuscarScriptServidor() => RutasVisor.ServidorBlockchain;
 
         public void Dispose()
         {

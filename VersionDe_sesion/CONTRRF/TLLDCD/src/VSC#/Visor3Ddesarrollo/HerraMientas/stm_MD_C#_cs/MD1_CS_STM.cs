@@ -707,24 +707,6 @@ namespace Visor3D.Stm
         /// </summary>
         public IReadOnlyList<string> Subcarpetas => _fijadas ?? _descubiertas.Value;
 
-        /// <summary>Devuelve la jerarquía que se creará.</summary>
-        public IReadOnlyList<string> Descubrir() => Subcarpetas;
-
-        /// <summary>
-        /// Devuelve la carpeta de la red neuronal si existe, o <c>null</c>.
-        /// El módulo C# no ejecuta Python: solo resuelve la ruta.
-        /// </summary>
-        public string? CargarRed()
-            => UsarRed && Md1Stm.TryLocalizarRedNeuronal(_rutaRed, out string? ruta)
-                ? ruta
-                : null;
-
-        /// <summary>
-        /// Devuelve <c>LCBS_NEURONAL.py</c> si existe, o <c>null</c>.
-        /// </summary>
-        public string? CargarLcbs()
-            => UsarRed && Md1Stm.TryLocalizarLcbsNeuronal(out string? ruta) ? ruta : null;
-
         /// <summary>
         /// Crea la jerarquía. Si <paramref name="rutaBase"/> es <c>null</c> usa
         /// <see cref="RutaFuente"/>.
