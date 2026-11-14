@@ -108,18 +108,16 @@ El alias reutiliza las capas ya descargadas (no duplica los 6,6 GB) y no requier
 
 ---
 
-## 🧠 Modelos locales: estado verificado el 2026-10-31
+## 🧠 Modelos locales: estado verificado el 2026-11-14
 
 | modelo | instalado | tool calling |
 | --- | --- | --- |
-| `wvp-opencode` (alias 32k de qwen3.5) | sí | **funciona** → es el modelo por defecto de opencode |
-| `qwen3.5:latest` (9,7B) | sí | funciona **sólo con contexto ≥ 32k**; con el default no ve las tools |
-| `qwen2.5:7b` | sí | emite `tool_calls` en `/api/chat` con `num_ctx 16384` |
-| `qwen2.5-coder:7b` / `:latest` | sí | **no**: su plantilla no produce `tool_calls` (devuelve el JSON como texto incluso con prompt corto) |
-| `starcoder2:7b` | sí | sin probar (`/api/tags` lo declara sólo `completion,insert`) |
-| `cogito:3b`, `qwen3:1.7b`, `qwen2.5-coder:3b`, `llama3.1`, `gemma2:2b`, `llama3.2:1b`, `qwen2-math:1.5b` | **no** | aparecen en el config pero no están descargados |
+| `wvp-opencode:latest` (alias 32k de `qwen2.5:7b`) | sí | **funciona** → modelo por defecto de opencode |
+| `qwen2.5:7b` (7,6B Q4_K_M) | sí | emite `tool_calls` en `/v1` con `num_ctx 32768` |
+| `codellama:7b` | sí | sin probar (no se usa como agente) |
+| `qwen3.5:latest`, `qwen2.5-coder:*`, `llama3.1`, `cogito:3b`, etc. | **no** | ya no están descargados; se quitaron del config |
 
-LM Studio (`http://localhost:1234/v1`) estaba apagado durante la configuración: su bloque de `provider` no se ha probado.
+LM Studio (`http://localhost:1234/v1`) sigue apagado: su bloque de `provider` no se ha probado.
 
 ---
 
@@ -162,11 +160,50 @@ Estado final: **la IA local lee y edita código de forma end-to-end, verificado*
 
 ---
 
+## 🔧 Reparación de la IA local (sesión 2026-11-14)
+
+Al retomar el trabajo se detectó que el flujo RFPRMN había vaciado `TLLDCD/src`: no quedaban ni `node_modules` ni `opencode.exe`, y en Ollama sólo sobrevivían `codellama:7b` y `qwen2.5:7b`. El alias `wvp-opencode` y `qwen3.5:latest` habían desaparecido, así que el config apuntaba a modelos inexistentes.
+
+Cambios aplicados:
+
+1. **`Modelfile` reescrito** (3 copias: `TLLDCD/src` + las dos `actualizacion_*`):
+   ```dockerfile
+   FROM qwen2.5:7b
+   PARAMETER num_ctx 32768
+   ```
+2. **Alias recreado** (reutiliza las capas de `qwen2.5:7b`, no duplica los 4,7 GB):
+   ```powershell
+   ollama create wvp-opencode -f Modelfile
+   ```
+3. **`opencode.jsonc` corregido** (3 copias + config global):
+   - `provider.ollama.models` ahora sólo lista modelos existentes: `wvp-opencode:latest`, `qwen2.5:7b`, `codellama:7b`.
+   - `model`, `small_model` y los agentes `build`/`general`/`plan` apuntan a `ollama/wvp-opencode:latest`.
+   - Se añadieron `timeout`/`headerTimeout`/`chunkTimeout: false` también en la config global.
+4. **Config global** (`~/.config/opencode/opencode.jsonc`): antes fijaba `ollama/cogito:3b` y `ollama/qwen3:1.7b`, inexistentes. Ahora usa `ollama/wvp-opencode:latest` en todos los agentes.
+
+**Detalle importante de OpenCode v2:** el ID del modelo debe coincidir con el que reporta Ollama (`/api/tags`), incluido el sufijo `:latest`. Referenciar `ollama/wvp-opencode` (sin `:latest`) falla con `Model unavailable`.
+
+**Verificación (evidencia real):**
+
+| prueba | resultado |
+| --- | --- |
+| `node comprobar_ollama.mjs wvp-opencode` | `prompt_tokens: 5966`, `tool_calls: ["write"]`, veredicto **EDITABLE** |
+| `opencode run "di OK"` desde `TLLDCD/src/STM_HRTS/opencode` | `> build · wvp-opencode:latest` → `OK` |
+| `opencode run "di OK"` desde la raíz del repo (config global) | `> build · wvp-opencode:latest` → `OK` |
+| `/api/ps` tras precarga | `wvp-opencode:latest`, `ctx=32768`, `5,99 GB VRAM`, `keep_alive` ~24 h |
+
+**Nota sobre la instalación local:** `node_modules` y `opencode.exe` siguen ausentes en esta carpeta. Los `.bat` detectan que no existe el binario local y caen al `opencode` global (v2.3.0), que es el que se ha validado. Si se quiere la copia autónoma, `npm ci` reinstala `opencode-ai@1.19.5` (versión anterior a la global).
+
+---
+
 ## ⏭️ Pendientes y límites honestos
 
-- **Rendimiento de la IA local:** reducir el tiempo por turno (limitar `num_predict` en `Modelfile` o valorar `qwen2.5:7b`, que ya emite `tool_calls`). Es la mejora prioritaria.
+- **Rendimiento:** `qwen2.5:7b` no es un modelo de razonamiento, así que el turno es mucho más rápido que con el antiguo `qwen3.5` (que gastaba miles de tokens en "thinking"). Aun así, un 7B local es limitado para tareas grandes; para código complejo sigue siendo mejor un modelo en la nube.
+- **Instalación autónoma:** `node_modules` y `opencode.exe` no están en la carpeta. Los `.bat` usan el `opencode` global (v2.3.0). `npm ci` reinstala la copia local, pero fija `opencode-ai@1.19.5`, anterior a la global.
+- **`codellama:7b`** está instalado pero no se ha verificado su `tool_calling`; no se usa como agente.
+- **LM Studio** sigue sin probar (apagado).
 - La **lista blanca de `bash`** está cargada y evaluada (aparece en los errores de denegación), pero no se ha verificado de forma end-to-end que un comando `allow` se ejecute en modo no interactivo.
 - `external_directory` se deja en `ask`: no se ha comprobado cómo clasifica opencode una ruta `../…` dentro del repo pero fuera de esta carpeta.
 - Con `opencode --auto` se saltan también los `ask` de bash; no es el modo por defecto de esta carpeta.
-- Los ficheros de esta carpeta viven bajo `TLLDCD/src`, que el flujo RFPRMN vacía al actualizar: el `Modelfile`, `comprobar_ollama.mjs` y este README son reproducibles pero conviene revisarlos tras cada actualización.
+- Los ficheros de esta carpeta viven bajo `TLLDCD/src`, que el flujo RFPRMN vacía al actualizar: el `Modelfile`, `comprobar_ollama.mjs` y este README son reproducibles pero conviene revisarlos tras cada actualización. Las plantillas `Sistema_Principal/PRY/actualizacion_*/src/STM_HRTS/opencode/` se han sincronizado con los mismos cambios.
 
