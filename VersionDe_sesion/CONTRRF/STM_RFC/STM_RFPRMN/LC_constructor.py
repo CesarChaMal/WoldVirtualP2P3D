@@ -11,15 +11,21 @@ Acepta texto etiquetado (una o varias líneas), dict o JSON; la CLI responde
 en texto legible, no en JSON.
 
 Acciones disponibles:
-- ``crear todo``          : ejecuta las tres siguientes en secuencia (explícito).
+- ``crear base``          : secuencia por defecto: primero ``crear carpeta``
+  (con su cálculo neuronal) y después ``crear archivo``.
+- ``crear todo``          : secuencia completa: ``crear base`` + ``RedNeuronal``
+  + ``MTBGT``.
 - ``crear carpeta``       : ``LCtrabajando/src`` con **toda** la jerarquía de
-  carpetas detectada en ``TLLDCD/src`` (solo carpetas, sin archivos).  Es la
-  acción por defecto de la CLI cuando no se pasan argumentos.
+  carpetas detectada en ``TLLDCD/src`` y su cálculo neuronal.
 - ``crear red neuronal``  : ``LCtrabajando/src/LC_STM/RedNeuronal`` y sus
   6 familias.  Se invoca con ``python LC_constructor.py red``.
 - ``crear mtbgt``         : ``LCtrabajando/src/MTBGT`` con sus carpetas;
   los archivos quedan para una fase posterior.  Se invoca con
   ``python LC_constructor.py mtbgt``.
+- ``crear archivo``       : archivo suelto (``Ruta`` + ``Nombre`` + ``Lenguaje``)
+  o, sin nombre, la jerarquía de código de ``TLLDCD/src`` recreada vacía bajo
+  ``LCtrabajando/src``. Con ``Lenguaje`` y sin ``Nombre`` filtra la jerarquía
+  a esa extensión (por ejemplo ``csharp`` crea solo los ``.cs``).
 """
 from __future__ import annotations
 
@@ -37,6 +43,7 @@ if str(_DIR_MODULO) not in sys.path:
 
 import RFPRMN as _RFPRMN  # noqa: E402
 from STM_LC_CONSTRUCTOR_MD import (  # noqa: E402
+    COMANDO_ARCHIVO,
     COMANDO_CARPETA,
     COMANDO_MTBGT,
     COMANDO_RED,
@@ -118,6 +125,7 @@ def _rutas_predeterminadas() -> dict[str, str]:
         COMANDO_CARPETA: RUTA_PREDETERMINADA,
         COMANDO_RED: RUTA_RED_PREDETERMINADA,
         COMANDO_MTBGT: RUTA_MTBGT_PREDETERMINADA,
+        COMANDO_ARCHIVO: RUTA_PREDETERMINADA,
         COMANDO_TODO: RUTA_PREDETERMINADA,
     }
 
@@ -196,6 +204,35 @@ def comando_crear_mtbgt(
     return crear_mtbgt(ruta, subcarpetas, archivos)
 
 
+def crear_archivo(ruta: str | Path = "", nombre: str = "",
+                  lenguaje: str = "",
+                  archivos: Iterable[str] | None = None) -> dict[str, Any]:
+    """Atajo de la cuarta acción; sin nombre recrea la jerarquía de código."""
+    return obtener_constructor().crear_archivo(ruta, nombre, lenguaje, archivos)
+
+
+def comando_crear_archivo(
+    ruta: str | Path = "", nombre: str = "", lenguaje: str = "",
+    archivos: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Alias de la cuarta acción con sus valores predeterminados."""
+    return crear_archivo(ruta, nombre, lenguaje, archivos)
+
+
+def lenguajes_fuente() -> dict[str, int]:
+    """Lenguajes de programación detectados en ``TLLDCD/src``."""
+    from STM_LC_CONSTRUCTOR_MD import ConstructorArchivos
+
+    return ConstructorArchivos().lenguajes
+
+
+def archivos_fuente() -> tuple[str, ...]:
+    """Jerarquía de archivos de código detectada en ``TLLDCD/src``."""
+    from STM_LC_CONSTRUCTOR_MD import ConstructorArchivos
+
+    return ConstructorArchivos().archivos_fuente()
+
+
 def crear_todo() -> dict[str, Any]:
     """Ejecuta la secuencia completa: ``src``, ``RedNeuronal`` y ``MTBGT``."""
     return obtener_constructor().crear_todo()
@@ -206,6 +243,16 @@ def comando_crear_todo() -> dict[str, Any]:
     return crear_todo()
 
 
+def crear_base() -> dict[str, Any]:
+    """Secuencia base: ``src`` con su red y después los archivos vacíos."""
+    return obtener_constructor().crear_base()
+
+
+def comando_crear_base() -> dict[str, Any]:
+    """Alias de la secuencia base."""
+    return crear_base()
+
+
 def formatear_resultado(resultado: Mapping[str, Any]) -> str:
     """Devuelve el informe de terminal (texto legible, sin JSON)."""
     acciones = resultado.get("acciones")
@@ -213,17 +260,19 @@ def formatear_resultado(resultado: Mapping[str, Any]) -> str:
         partes = [formatear_resultado(accion) for accion in acciones]
         estado = "OK" if resultado.get("ok") else "CON ERRORES"
         partes.append(
-            f"Resultado global: {estado} · {resultado.get('total', 0)} carpetas")
+            f"Resultado global: {estado} · {resultado.get('total', 0)} elementos")
         return "\n".join(partes)
     ancho = 74
     comando = resultado.get("comando", COMANDO_CARPETA)
+    es_archivo = comando == COMANDO_ARCHIVO
+    etiqueta = "Archivo" if es_archivo else "Carpeta"
     lineas = ["=" * ancho, f" LC_constructor · comando {comando}", "=" * ancho]
     if not resultado.get("ok"):
         lineas.append(f"ERROR: {resultado.get('error', 'desconocido')}")
         if resultado.get("ruta"):
             lineas.append(f"Ruta: {resultado['ruta']}")
         if resultado.get("nombre"):
-            lineas.append(f"Carpeta: {resultado['nombre']}")
+            lineas.append(f"{etiqueta}: {resultado['nombre']}")
         lineas.append("=" * ancho)
         return "\n".join(lineas)
     red = resultado.get("red_general") or {}
@@ -231,9 +280,11 @@ def formatear_resultado(resultado: Mapping[str, Any]) -> str:
     diagnostico = red.get("diagnostico") or {}
     lineas.extend([
         f"Ruta           : {resultado.get('ruta_mtbgt') or resultado.get('ruta', '')}",
-        f"Carpeta        : {resultado.get('nombre', '')}",
+        f"{etiqueta:<14} : {resultado.get('nombre', '')}",
     ])
-    if not red.get("omitida"):
+    if es_archivo and resultado.get("lenguaje"):
+        lineas.append(f"Lenguaje       : {resultado['lenguaje']}")
+    if red and not red.get("omitida"):
         lineas.append(
             f"Red general    : LCBS_NEURONAL v{red.get('version', '?')}")
         salud = red.get("salud") or {}
@@ -259,16 +310,32 @@ def formatear_resultado(resultado: Mapping[str, Any]) -> str:
             lineas.append(
                 f"Neurona entrada: impulso={entrada.get('impulso', '?')} "
                 f"entropia={entrada.get('entropia', '?')}")
-    lineas.append(f"Jerarquia      : {resultado.get('total', 0)} carpetas")
+    if es_archivo:
+        lineas.append(f"Archivos       : {resultado.get('total', 0)} vacíos")
+        lenguajes = resultado.get("lenguajes") or {}
+        if lenguajes:
+            detalle = ", ".join(f"{extension}={numero}"
+                                for extension, numero in lenguajes.items())
+            lineas.append(f"Lenguajes      : {detalle}")
+    else:
+        lineas.append(f"Jerarquia      : {resultado.get('total', 0)} carpetas")
     archivos = resultado.get("archivos") or []
     if archivos:
-        lineas.append(
-            "Archivos       : " + ", ".join(Path(a).name for a in archivos))
+        nombres = [Path(a).name for a in archivos]
+        muestra = ", ".join(nombres[:12])
+        if len(nombres) > 12:
+            muestra += f" (+{len(nombres) - 12} más)"
+        lineas.append(f"Archivos       : {muestra}")
     for paso in resultado.get("pasos", []):
-        lineas.append(f"  {paso.get('paso', '?'):>2}. {paso.get('carpeta', '')}")
+        lineas.append(
+            f"  {paso.get('paso', '?'):>2}. "
+            f"{paso.get('archivo', paso.get('carpeta', ''))}")
     if resultado.get("advertencia"):
         lineas.append(f"AVISO          : {resultado['advertencia']}")
-    estado = "OK" if red.get("ok") else "OK (creación; red general con error)"
+    if red:
+        estado = "OK" if red.get("ok") else "OK (creación; red general con error)"
+    else:
+        estado = "OK" if resultado.get("ok") else "CON ERRORES"
     lineas.extend([f"Estado         : {estado}", "=" * ancho])
     return "\n".join(lineas)
 
@@ -281,7 +348,7 @@ def main(argv: list[str] | None = None) -> int:
     if argumentos:
         resultado = ejecutar_orden(" ".join(argumentos))
     else:
-        resultado = crear_carpeta()
+        resultado = crear_base()
     print(formatear_resultado(resultado))
     if pausa or (not argumentos and sys.stdin.isatty()):
         try:
@@ -297,6 +364,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "ARCHIVOS_MTBGT",
+    "COMANDO_ARCHIVO",
     "COMANDO_CARPETA",
     "COMANDO_MTBGT",
     "COMANDO_RED",
@@ -316,12 +384,17 @@ __all__ = [
     "USAR_RED_NEURONAL",
     "ConstructorLucIA",
     "__version__",
+    "archivos_fuente",
     "cargar_lcbs_neuronal",
     "cargar_modulo_red",
+    "comando_crear_archivo",
+    "comando_crear_base",
     "comando_crear_carpeta",
     "comando_crear_mtbgt",
     "comando_crear_red_neuronal",
     "comando_crear_todo",
+    "crear_archivo",
+    "crear_base",
     "crear_carpeta",
     "crear_mtbgt",
     "crear_red_neuronal",
@@ -331,6 +404,7 @@ __all__ = [
     "ejecutar_orden",
     "formatear_resultado",
     "interpretar_orden",
+    "lenguajes_fuente",
     "localizar_lcbs_neuronal",
     "localizar_red_neuronal",
     "main",

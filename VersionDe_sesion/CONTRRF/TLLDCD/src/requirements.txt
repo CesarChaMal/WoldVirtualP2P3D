@@ -19,11 +19,11 @@ vosk
 
 # IA local / neuronal (torch disponible; transformers/huggingface_hub requieren PyYAML sin rueda en 3.15)
 torch
-# transformers
-# huggingface_hub
-# llama-cpp-python  (requiere compilacion C++; instalar solo con MSVC Build Tools)
+transformers
+huggingface_hub
+llama-cpp-python  (requiere compilacion C++; instalar solo con MSVC Build Tools)
 
 # No disponible en Python 3.15 (degradacion):
-# onnxruntime
-# piper-tts  (depende de onnxruntime)
-# PyYAML  (sin rueda para 3.15; bloquea transformers/huggingface_hub)
+onnxruntime
+piper-tts  (depende de onnxruntime)
+PyYAML  (sin rueda para 3.15; bloquea transformers/huggingface_hub)

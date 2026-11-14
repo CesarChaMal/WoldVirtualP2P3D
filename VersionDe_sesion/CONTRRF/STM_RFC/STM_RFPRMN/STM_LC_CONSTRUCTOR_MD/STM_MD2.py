@@ -28,10 +28,11 @@ from typing import Any
 COMANDO_CARPETA = "crear carpeta"
 COMANDO_RED = "crear red neuronal"
 COMANDO_MTBGT = "crear mtbgt"
+COMANDO_ARCHIVO = "crear archivo"
 COMANDO_TODO = "crear todo"
 
 COMANDOS: tuple[str, ...] = (
-    COMANDO_CARPETA, COMANDO_RED, COMANDO_MTBGT, COMANDO_TODO,
+    COMANDO_CARPETA, COMANDO_RED, COMANDO_MTBGT, COMANDO_ARCHIVO, COMANDO_TODO,
 )
 
 #: Nombre que usa el comando cuando no se indica.
@@ -54,6 +55,7 @@ _DEFAULTS: dict[str, tuple[str, tuple[str, ...] | None]] = {
     COMANDO_CARPETA: (NOMBRE_PREDETERMINADO, None),
     COMANDO_RED: (NOMBRE_RED_PREDETERMINADO, SUBCARPETAS_RED),
     COMANDO_MTBGT: (NOMBRE_MTBGT_PREDETERMINADO, SUBCARPETAS_MTBGT),
+    COMANDO_ARCHIVO: ("", None),
     COMANDO_TODO: (NOMBRE_PREDETERMINADO, None),
 }
 
@@ -79,7 +81,13 @@ class InterpreteOrden:
                 r"(?:donde\s+crear|de\s+creaci[oó]n)?\s*[:=]\s*")),
             ("nombre", re.compile(
                 r"(?i)(?:^|[\s,;])(?:nombre)\s*"
-                r"(?:de\s+la\s+carpeta|de\s+carpeta)?\s*[:=]\s*")),
+                r"(?:de\s+la\s+carpeta|de\s+carpeta|del\s+archivo|de\s+archivo)?"
+                r"\s*[:=]\s*")),
+            ("lenguaje", re.compile(
+                r"(?i)(?:^|[\s,;])(?:lenguaje(?:\s+de\s+programaci[oó]n)?"
+                r"|lenguaje_programacion|extension)\s*[:=]\s*")),
+            ("archivos", re.compile(
+                r"(?i)(?:^|[\s,;])(?:archivos)\s*[:=]\s*")),
             ("subcarpetas", re.compile(
                 r"(?i)(?:^|[\s,;])(?:subcarpetas?|jerarqu[ií]a)\s*[:=]\s*")),
         )
@@ -90,6 +98,7 @@ class InterpreteOrden:
             r"(crear\s+mtbgt|mtbgt|crear\s+godot|godot"
             r"|crear\s+todo|todo|crear\s+secuencia|secuencia"
             r"|crear\s+red\s+neuronal|red\s+neuronal|red_neuronal|red"
+            r"|crear\s+archivo|archivo"
             r"|crear\s+carpeta|crear_carpeta)\b"
         )
 
@@ -145,6 +154,8 @@ class InterpreteOrden:
             if limpio in ("mtbgt", "crear mtbgt", "godot", "crear godot",
                           COMANDO_MTBGT):
                 return COMANDO_MTBGT
+            if limpio in ("archivo", "crear archivo", COMANDO_ARCHIVO):
+                return COMANDO_ARCHIVO
             if limpio in ("todo", "crear todo", "secuencia", "crear secuencia",
                           COMANDO_TODO):
                 return COMANDO_TODO
@@ -175,7 +186,8 @@ class InterpreteOrden:
     def error(mensaje: str) -> dict[str, Any]:
         """Estructura de error común al interpretar una orden."""
         return {"comando": COMANDO_CARPETA, "ruta": "", "nombre": "",
-                "subcarpetas": None, "error": mensaje}
+                "subcarpetas": None, "lenguaje": "", "archivos": None,
+                "error": mensaje}
 
     # -- normalización ----------------------------------------------------
     def normalizar_orden(self, datos: Mapping[str, Any]) -> dict[str, Any]:
@@ -199,6 +211,10 @@ class InterpreteOrden:
             "ruta": str(ruta).strip().strip("\"'"),
             "nombre": str(nombre).strip().strip("\"'"),
             "subcarpetas": subcarpetas,
+            "lenguaje": str(datos.get("lenguaje")
+                            or datos.get("lenguaje_programacion")
+                            or datos.get("extension") or "").strip().strip("\"'"),
+            "archivos": self.Campos.normalizar_subcarpetas(datos.get("archivos")),
         }
 
     def interpretar(self, orden: str | Mapping[str, Any]) -> dict[str, Any]:
@@ -229,11 +245,15 @@ class InterpreteOrden:
                     and self.Campos.PREFIJO_COMANDO.match(texto) is None):
                 nombre_clave = str(campos.get("nombre", "")).strip().lower()
                 ruta_clave = Path(str(campos.get("ruta", ""))).name.lower()
+                lenguaje_clave = str(campos.get("lenguaje", "")).strip().lower()
                 if nombre_clave == NOMBRE_RED_PREDETERMINADO.lower():
                     comando = COMANDO_RED
                 elif (nombre_clave == NOMBRE_MTBGT_PREDETERMINADO.lower()
                       or ruta_clave == NOMBRE_MTBGT_PREDETERMINADO.lower()):
                     comando = COMANDO_MTBGT
+                elif (lenguaje_clave or campos.get("archivos")
+                      or Path(nombre_clave).suffix):
+                    comando = COMANDO_ARCHIVO
                 if comando != COMANDO_CARPETA:
                     ruta_def, nombre_def, sub_def = self.predeterminados(
                         comando)
@@ -245,18 +265,23 @@ class InterpreteOrden:
                 "subcarpetas": (
                     self.Campos.normalizar_subcarpetas(
                         campos.get("subcarpetas")) or sub_def),
+                "lenguaje": (campos.get("lenguaje")
+                             or "").strip().strip("\"'"),
+                "archivos": self.Campos.normalizar_subcarpetas(
+                    campos.get("archivos")),
             }
 
         coincidencia = self.Campos.PREFIJO_COMANDO.match(texto)
         if coincidencia is None:
             return self.error(
-                "No reconozco la orden. Usa 'crear carpeta' o "
-                "'crear red neuronal' con 'Ruta donde crear:' y "
-                "'Nombre de la carpeta:'.")
+                "No reconozco la orden. Usa 'crear carpeta', "
+                "'crear red neuronal' o 'crear archivo' con "
+                "'Ruta donde crear:' y 'Nombre de la carpeta:'.")
         resto = texto[coincidencia.end():].strip()
         if not resto:
             return {"comando": comando, "ruta": ruta_def,
-                    "nombre": nombre_def, "subcarpetas": sub_def}
+                    "nombre": nombre_def, "subcarpetas": sub_def,
+                    "lenguaje": "", "archivos": None}
         try:
             partes = shlex.split(resto, posix=False)
         except ValueError:
@@ -265,7 +290,7 @@ class InterpreteOrden:
         nombre = (partes[1].strip().strip("\"'")
                   if len(partes) > 1 else nombre_def)
         return {"comando": comando, "ruta": ruta, "nombre": nombre,
-                "subcarpetas": sub_def}
+                "subcarpetas": sub_def, "lenguaje": "", "archivos": None}
 
     def __call__(self, orden: str | Mapping[str, Any]) -> dict[str, Any]:
         """Permite usar la instancia como función."""
@@ -286,6 +311,7 @@ def interpretar_orden(
 
 __all__ = [
     "COMANDOS",
+    "COMANDO_ARCHIVO",
     "COMANDO_CARPETA",
     "COMANDO_MTBGT",
     "COMANDO_RED",
