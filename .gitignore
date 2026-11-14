@@ -308,7 +308,6 @@ VersionDe_sesion/Sistema_Principal/PRY/actualizacion_*/
 /_tmp_*
 /_acl_reports/
 /_tmp_*/**
-.vscode/
 .idea/
 .DS_Store
 Thumbs.db
