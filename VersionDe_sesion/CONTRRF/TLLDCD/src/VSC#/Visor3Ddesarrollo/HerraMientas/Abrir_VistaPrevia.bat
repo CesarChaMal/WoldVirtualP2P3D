@@ -1,25 +1,16 @@
 @echo off
 setlocal
 title Wold Virtual 3D - Vista previa del visor
-set "EXE=E:\WoldVirtualP2P3D\_tmp_visor_preview\Debug\net8.0-windows\win-x64\DMWoldVirtualP2P3Dv2.8.2.exe"
-set "PCK=E:\WoldVirtualP2P3D\_tmp_visor_preview\Debug\net8.0-windows\win-x64\wvp3d.pck"
-set "PYW=E:\WoldVirtualP2P3D\VersionDe_sesion\Sistema_Principal\PRY\actualizacion_c5074e3b\src\LC_STM\python\pythonw.exe"
-set "SRV=E:\WoldVirtualP2P3D\VersionDe_sesion\Sistema_Principal\PRY\actualizacion_c5074e3b\src\MTBGT\WoldVirtualP2P3D\lucia3D\GLTF_lucIA\celebro_3D\puente_3D\servidor_lucia.py"
 
-if not exist "%EXE%" (
-  echo No se encuentra la vista previa:
-  echo %EXE%
-  pause
-  exit /b 1
-)
-if not exist "%PCK%" echo Aviso: falta el PCK junto al .exe.
+for %%I in ("%~dp0..\..\..") do set "SRC=%%~fI"
+set "PROY=%SRC%\MTBGT\WoldVirtualP2P3D"
 
 echo Cerrando servidores de LucIA anteriores...
 powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*servidor_lucia.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
 timeout /t 1 /nobreak >nul
 
 echo Arrancando LucIA en 127.0.0.1:8765...
-start "LucIA 8765" /min "%PYW%" "%SRV%" --modelo qwen2.5:7b --puerto 8765 --sin-precarga-voz
+start "LucIA 8765" /min "%~dp0Iniciar_Lucia_Visor.bat"
 
 for /L %%i in (1,1,40) do (
   netstat -ano | findstr ":8765" | findstr "LISTENING" >nul
@@ -34,6 +25,25 @@ pause
 exit /b 1
 
 :listo
-echo LucIA escuchando. Abriendo el visor preliminar...
-start "" "%EXE%"
+echo LucIA escuchando.
+
+set "EXE="
+for /f "delims=" %%F in ('dir /b /s "%~dp0bin\*WoldVirtualP2P3Dv*.exe" 2^>nul') do (
+  if not defined EXE set "EXE=%%F"
+)
+
+if defined EXE (
+  echo Abriendo vista previa: %EXE%
+  start "" "%EXE%"
+  exit /b 0
+)
+
+if not exist "%PROY%\project.godot" (
+  echo No hay binario compilado ni proyecto Godot en %PROY%
+  pause
+  exit /b 1
+)
+
+echo Sin binario compilado: abriendo el mundo de desarrollo con Godot...
+start "WoldVirtual - Desarrollo" /min "%~dp0Lanzar_Desarrollo.bat"
 exit /b 0

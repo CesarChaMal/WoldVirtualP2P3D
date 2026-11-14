@@ -5,7 +5,7 @@ consume el visor de Wold Virtual 3D y la recepción de LucIA 3D en Godot.
 Usa el libro mayor (ledger) oficial del sistema: STM_CH/blockchain_ledger.json.
 
 Uso:
-    python STM_BKCH/servidor_oficial.py [--puerto 8545]
+    python STM_BKCH/stm_bkch1/servidor_oficial.py [--puerto 8545]
 """
 from __future__ import annotations
 
@@ -15,12 +15,11 @@ import sys
 import time
 from pathlib import Path
 
-from STM_BKCH.stm_bkch1 import bksvcb_net
-
 SRC_DIR = Path(__file__).resolve().parents[2]
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from STM_BKCH.stm_bkch1 import bksvcb_net  # noqa: E402
 from STM_BKCH.stm_bkch1 import BKSVCB  # noqa: E402
 from STM_CH.STM_herramientas.rutas import LEDGER_PATH, PSNRL_DIR  # noqa: E402
 
