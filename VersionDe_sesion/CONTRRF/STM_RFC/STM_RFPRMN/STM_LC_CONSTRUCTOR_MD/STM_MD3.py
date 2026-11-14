@@ -35,6 +35,7 @@ from .STM_MD1 import (
     silencio,
 )
 from .STM_MD2 import (
+    COMANDO_ARCHIVO,
     COMANDO_CARPETA,
     COMANDO_MTBGT,
     COMANDO_RED,
@@ -45,6 +46,11 @@ from .STM_MD2 import (
     SUBCARPETAS_MTBGT,
     SUBCARPETAS_RED,
     InterpreteOrden,
+)
+from .STM_MD4 import (
+    EXTENSIONES_POR_LENGUAJE,
+    NOMBRE_ARCHIVO_PREDETERMINADO,
+    ConstructorArchivos,
 )
 
 #: Tercera acción: sin archivos de momento; ``project.godot`` queda para
@@ -358,17 +364,110 @@ class ConstructorLucIA:
         """Alias de la tercera acción con sus valores predeterminados."""
         return self.crear_mtbgt(ruta, subcarpetas, archivos)
 
+    def crear_archivo(
+        self, ruta: str | Path = "", nombre: str = "",
+        lenguaje: str = "", archivos: Iterable[str] | None = None,
+    ) -> dict[str, Any]:
+        """Cuarta acción: archivo suelto o jerarquía vacía de código.
+
+        Sin ``nombre`` ni ``lenguaje`` recrea la jerarquía de código de la
+        fuente bajo ``ruta/src``, igual que ``crear carpeta``. Con ``nombre``
+        o ``lenguaje`` crea un único archivo vacío (``RFPRMN``); con
+        ``archivos`` crea exactamente esas rutas relativas. Si solo se indica
+        ``lenguaje`` (sin nombre), filtra la jerarquía a esa extensión
+        (por ejemplo ``csharp`` para crear solo los ``.cs``).
+        """
+        base = self.Operaciones.normalizar_ruta(
+            ruta, self._ruta(COMANDO_ARCHIVO))
+        constructor = ConstructorArchivos(maquina=self.rfprmn)
+        nombre = str(nombre or "").strip()
+        lenguaje = str(lenguaje or "").strip()
+        extension = ""
+        if lenguaje and not nombre:
+            extension = EXTENSIONES_POR_LENGUAJE.get(
+                lenguaje.lower(), f".{lenguaje.lower()}")
+        if extension:
+            filtrados = tuple(
+                archivo for archivo in constructor.archivos_fuente()
+                if archivo.lower().endswith(extension))
+            resultado = constructor.crear(
+                base, nombre or NOMBRE_PREDETERMINADO, filtrados)
+            resultado["extension"] = extension
+        elif archivos is not None:
+            resultado = constructor.crear(
+                base, nombre or NOMBRE_PREDETERMINADO, archivos)
+        elif lenguaje or (nombre and Path(nombre).suffix):
+            try:
+                objetivo = constructor.crear_uno(
+                    base, nombre or NOMBRE_ARCHIVO_PREDETERMINADO, lenguaje)
+            except (OSError, ValueError) as error:
+                resultado = {
+                    "ok": False, "raiz": str(base), "archivos": [],
+                    "total": 0, "pasos": [],
+                    "error": f"{type(error).__name__}: {error}",
+                }
+            else:
+                resultado = {
+                    "ok": True, "raiz": str(base), "archivos": [objetivo],
+                    "total": 1,
+                    "pasos": [{"paso": 1,
+                               "archivo": nombre or NOMBRE_ARCHIVO_PREDETERMINADO,
+                               "ruta": objetivo}],
+                }
+        else:
+            resultado = constructor.crear(
+                base, nombre or NOMBRE_PREDETERMINADO)
+        resultado["comando"] = COMANDO_ARCHIVO
+        resultado["ruta"] = str(base)
+        resultado["nombre"] = nombre or NOMBRE_PREDETERMINADO
+        resultado["lenguaje"] = lenguaje
+        if not resultado.get("lenguajes"):
+            extensiones = [Path(str(item)).suffix.lower()
+                           for item in (resultado.get("archivos") or [])]
+            conteo: dict[str, int] = {}
+            for extension in extensiones:
+                if extension:
+                    conteo[extension] = conteo.get(extension, 0) + 1
+            resultado["lenguajes"] = dict(sorted(
+                conteo.items(), key=lambda par: (-par[1], par[0])))
+        if not resultado.get("ok") and not resultado.get("error"):
+            resultado["error"] = ("; ".join(resultado.get("errores", []))
+                                  or "no se pudieron crear todos los archivos")
+        return resultado
+
+    def comando_crear_archivo(
+        self, ruta: str | Path = "", nombre: str = "",
+        lenguaje: str = "", archivos: Iterable[str] | None = None,
+    ) -> dict[str, Any]:
+        """Alias de la cuarta acción con sus valores predeterminados."""
+        return self.crear_archivo(ruta, nombre, lenguaje, archivos)
+
     def crear_todo(self) -> dict[str, Any]:
-        """Secuencia completa: ``src``, ``RedNeuronal`` y ``MTBGT``."""
+        """Secuencia completa: ``src``, ``RedNeuronal``, ``MTBGT`` y archivos."""
         acciones = [self.crear_carpeta(),
                     self.crear_red_neuronal(),
-                    self.crear_mtbgt()]
+                    self.crear_mtbgt(),
+                    self.crear_archivo()]
         return {
             "ok": all(accion.get("ok") for accion in acciones),
             "comando": COMANDO_TODO,
             "acciones": acciones,
             "total": sum(int(accion.get("total", 0)) for accion in acciones),
         }
+
+    def crear_base(self) -> dict[str, Any]:
+        """Secuencia base: ``src`` con su red y después los archivos vacíos."""
+        acciones = [self.crear_carpeta(), self.crear_archivo()]
+        return {
+            "ok": all(accion.get("ok") for accion in acciones),
+            "comando": "crear base",
+            "acciones": acciones,
+            "total": sum(int(accion.get("total", 0)) for accion in acciones),
+        }
+
+    def comando_crear_base(self) -> dict[str, Any]:
+        """Alias de la secuencia base."""
+        return self.crear_base()
 
     def comando_crear_todo(self) -> dict[str, Any]:
         """Alias de la secuencia completa."""
@@ -395,6 +494,12 @@ class ConstructorLucIA:
                              f"Disponibles: {', '.join(self.COMANDOS)}"}
         if comando == COMANDO_TODO:
             return self.crear_todo()
+        if comando == COMANDO_ARCHIVO:
+            return self.crear_archivo(
+                datos.get("ruta") or self._ruta(COMANDO_ARCHIVO),
+                datos.get("nombre") or "",
+                datos.get("lenguaje") or "",
+                datos.get("archivos"))
         if comando == COMANDO_MTBGT:
             return self.crear_mtbgt(
                 datos.get("ruta") or self._ruta(COMANDO_MTBGT),
@@ -476,6 +581,22 @@ def comando_crear_mtbgt(
     return crear_mtbgt(ruta, subcarpetas, archivos)
 
 
+def crear_archivo(
+    ruta: str | Path = "", nombre: str = "", lenguaje: str = "",
+    archivos: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Atajo de la cuarta acción: archivo suelto o jerarquía de código."""
+    return obtener_constructor().crear_archivo(ruta, nombre, lenguaje, archivos)
+
+
+def comando_crear_archivo(
+    ruta: str | Path = "", nombre: str = "", lenguaje: str = "",
+    archivos: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Alias de la cuarta acción con sus valores predeterminados."""
+    return crear_archivo(ruta, nombre, lenguaje, archivos)
+
+
 def crear_todo() -> dict[str, Any]:
     """Ejecuta la secuencia completa: ``src``, ``RedNeuronal`` y ``MTBGT``."""
     return obtener_constructor().crear_todo()
@@ -486,15 +607,30 @@ def comando_crear_todo() -> dict[str, Any]:
     return crear_todo()
 
 
+def crear_base() -> dict[str, Any]:
+    """Atajo de la secuencia base: carpetas con red y luego archivos."""
+    return obtener_constructor().crear_base()
+
+
+def comando_crear_base() -> dict[str, Any]:
+    """Alias de la secuencia base."""
+    return crear_base()
+
+
 __all__ = [
     "ARCHIVOS_MTBGT",
+    "COMANDO_ARCHIVO",
     "COMANDOS",
     "USAR_RED_NEURONAL",
     "ConstructorLucIA",
+    "comando_crear_archivo",
+    "comando_crear_base",
     "comando_crear_carpeta",
     "comando_crear_mtbgt",
     "comando_crear_red_neuronal",
     "comando_crear_todo",
+    "crear_archivo",
+    "crear_base",
     "crear_carpeta",
     "crear_mtbgt",
     "crear_red_neuronal",
