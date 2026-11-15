@@ -41,11 +41,7 @@ from .stm_seq2seq import describir as describir_seq2seq
 
 # ─── RESOLUCION DEL SUBSISTEMA NEURAL DE LUCIA ──────────────────────────────
 from .stm_rutas import SRC_DIR, CONTRRF_DIR, CONTRUCCION_DIR, TLLDCD_DIR, MODULO_DIR
-LCTRABAJANDO_DIR: Final[Path] = (
-    CONTRUCCION_DIR / "LCtrabajando"
-    if (CONTRUCCION_DIR / "LCtrabajando").is_dir()
-    else CONTRRF_DIR / "CONTRUCCION" / "LCtrabajando"
-)
+LCTRABAJANDO_DIR: Final[Path] = CONTRUCCION_DIR / "LCtrabajando"
 if SRC_DIR.exists() and str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
