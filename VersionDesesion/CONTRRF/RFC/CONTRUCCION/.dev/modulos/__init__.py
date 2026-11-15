@@ -1,0 +1,144 @@
+"""Módulos del Gestor de Entorno de Desarrollo y Sistema General (.dev)
+WoldVirtualP2P3D · Versión canónica modular.
+
+Submódulos:
+- rutas: Rutas canónicas y jerarquía de directorios.
+- entorno: Variables de entorno, VSCode, Pytest, cachés.
+- blockchain_mgr: Servidor oficial de blockchain y ledger (puerto 8545).
+- lucia_mgr: Servidor de LucIA 3D y conexión neuronal (puerto 8765).
+- visor_mgr: Reconstrucción, compilación y lanzamiento del visor 3D (Visor3D.csproj).
+"""
+from __future__ import annotations
+
+from .blockchain_mgr import (
+    detener_blockchain,
+    estado_blockchain,
+    iniciar_blockchain,
+    reiniciar_blockchain,
+    validar_ledger_en_disco,
+)
+from .entorno import (
+    actualizar_vscode_config,
+    configurar_variables_entorno,
+    ejecutar_pytest,
+    limpiar_cache_raiz,
+    obtener_python_activo,
+    obtener_pythonw_activo,
+    traer_pytest_ini,
+)
+from .lucia_mgr import (
+    detener_lucia,
+    estado_lucia,
+    iniciar_lucia,
+    reiniciar_lucia,
+)
+from .rutas import (
+    BLOCKCHAIN_DIR,
+    BLOCKCHAIN_SCRIPT,
+    CONTRRF_DIR,
+    CONTRUCCION_DIR,
+    DEV_DIR,
+    DEV_PYTEST_INI,
+    GODOT_PROJECT_FILE,
+    GODOT_PROY_DIR,
+    IPFS_DIR,
+    LEDGER_PATH,
+    LUCIA_BAT_VISOR,
+    LUCIA_DIR,
+    LUCIA_PS1_VISOR,
+    LUCIA_SCRIPT,
+    PRY_ARCHIVOS_DIR,
+    PRY_DIR,
+    PSNRL_DIR,
+    PYTEST_CACHE_DIR,
+    PYTHON_DIR,
+    PYTHON_EXE,
+    PYTHONW_EXE,
+    REPO_ROOT,
+    RFC_DIR,
+    RUFF_CACHE_DIR,
+    STM_RFC_DIR,
+    TLLDCD_DIR,
+    TLLDCD_SRC,
+    VENV_DIR,
+    VENV_PYTHON,
+    VENV_PYTHONW,
+    VERSION_DIR,
+    VISOR_BASE_DIR,
+    VISOR_CSPROJ,
+    VISOR_HERRAMIENTAS_DIR,
+    VISOR_OUTPUT_DLL,
+    VISOR_OUTPUT_EXE,
+    VSCODE_DIR,
+)
+from .visor_mgr import (
+    comprobar_dotnet,
+    estado_visor,
+    lanzar_visor,
+    reconstruir_visor,
+)
+
+__all__ = [
+    # Rutas
+    "DEV_DIR",
+    "CONTRUCCION_DIR",
+    "RFC_DIR",
+    "CONTRRF_DIR",
+    "VERSION_DIR",
+    "REPO_ROOT",
+    "PYTHON_DIR",
+    "PYTHON_EXE",
+    "PYTHONW_EXE",
+    "VENV_DIR",
+    "VENV_PYTHON",
+    "VENV_PYTHONW",
+    "PYTEST_CACHE_DIR",
+    "RUFF_CACHE_DIR",
+    "IPFS_DIR",
+    "VSCODE_DIR",
+    "DEV_PYTEST_INI",
+    "TLLDCD_DIR",
+    "TLLDCD_SRC",
+    "STM_RFC_DIR",
+    "PRY_DIR",
+    "PRY_ARCHIVOS_DIR",
+    "BLOCKCHAIN_DIR",
+    "BLOCKCHAIN_SCRIPT",
+    "LEDGER_PATH",
+    "PSNRL_DIR",
+    "LUCIA_DIR",
+    "LUCIA_SCRIPT",
+    "VISOR_BASE_DIR",
+    "VISOR_HERRAMIENTAS_DIR",
+    "VISOR_CSPROJ",
+    "VISOR_OUTPUT_DLL",
+    "VISOR_OUTPUT_EXE",
+    "LUCIA_BAT_VISOR",
+    "LUCIA_PS1_VISOR",
+    "GODOT_PROY_DIR",
+    "GODOT_PROJECT_FILE",
+    # Entorno
+    "obtener_python_activo",
+    "obtener_pythonw_activo",
+    "configurar_variables_entorno",
+    "traer_pytest_ini",
+    "actualizar_vscode_config",
+    "limpiar_cache_raiz",
+    "ejecutar_pytest",
+    # Blockchain
+    "estado_blockchain",
+    "iniciar_blockchain",
+    "detener_blockchain",
+    "reiniciar_blockchain",
+    "validar_ledger_en_disco",
+    # LucIA
+    "estado_lucia",
+    "iniciar_lucia",
+    "detener_lucia",
+    "reiniciar_lucia",
+    # Visor
+    "comprobar_dotnet",
+    "estado_visor",
+    "reconstruir_visor",
+    "lanzar_visor",
+]
