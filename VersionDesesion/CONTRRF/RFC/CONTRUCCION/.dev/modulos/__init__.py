@@ -78,6 +78,20 @@ from .rutas import (
     REINICIO_CUENTA_CS,
     SESION_UNICA_GUARDA_CS,
     VSCODE_DIR,
+    asegurar_ruta_en_repositorio,
+    validar_frontera_carpetas,
+)
+from .dependencias import (
+    comprobar_todas_dependencias,
+    formatear_informe_dependencias,
+)
+from .seguridad_entorno import (
+    ARCHIVO_AUDITORIA_ENTORNO,
+    GestorVenvSeguro,
+    ValidadorFronteraSegura,
+    asegurar_frontera,
+    auditar_operacion_entorno,
+    requiere_venv_activo,
 )
 from .visor_mgr import (
     comprobar_dotnet,
@@ -133,6 +147,17 @@ __all__ = [
     "LUCIA_PS1_VISOR",
     "GODOT_PROY_DIR",
     "GODOT_PROJECT_FILE",
+    "asegurar_ruta_en_repositorio",
+    "validar_frontera_carpetas",
+    "comprobar_todas_dependencias",
+    "formatear_informe_dependencias",
+    # Seguridad y Contención de Entorno
+    "ValidadorFronteraSegura",
+    "GestorVenvSeguro",
+    "asegurar_frontera",
+    "requiere_venv_activo",
+    "auditar_operacion_entorno",
+    "ARCHIVO_AUDITORIA_ENTORNO",
     # Entorno
     "obtener_python_activo",
     "obtener_pythonw_activo",

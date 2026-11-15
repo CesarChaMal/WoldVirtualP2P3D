@@ -83,14 +83,39 @@ from modulos import (  # noqa: E402
     reiniciar_lucia,
     traer_pytest_ini,
     validar_ledger_en_disco,
+    validar_frontera_carpetas,
+    asegurar_ruta_en_repositorio,
+    formatear_informe_dependencias,
+    ValidadorFronteraSegura,
+    GestorVenvSeguro,
+    asegurar_frontera,
+    requiere_venv_activo,
+    auditar_operacion_entorno,
+    ARCHIVO_AUDITORIA_ENTORNO,
 )
 
 
+@auditar_operacion_entorno("informe_general")
 def mostrar_informe() -> None:
     """Muestra el estado completo y unificado de rutas, servicios y visor."""
     print("=" * 76)
     print("  SISTEMA GENERAL DE RUTAS Y SERVICIOS WOLDVIRTUALP2P3D (.dev)")
     print("=" * 76)
+
+    # 0. Aislamiento y Contención de Fronteras
+    validador = ValidadorFronteraSegura()
+    frontera_ok, violaciones = validador.auditar_todo_el_arbol()
+    st_frontera = "[OK] AISLADO" if frontera_ok else "[FALLO] ESCAPE"
+    print(f"\n--- [0] CONTENCIÓN DE FRONTERAS Y ZERO TRUST ({st_frontera}) ---")
+    print(f"  Raíz autorizada: {REPO_ROOT}")
+    diag_venv = GestorVenvSeguro.verificar_integridad_entorno()
+    st_venv = "[OK] AISLADO EN .DEV" if diag_venv["es_contenido_en_dev"] else "[EXTERNO / SISTEMA]"
+    print(f"  Intérprete Python: {diag_venv['interprete_activo']} ({st_venv})")
+    if not frontera_ok:
+        for v in violaciones:
+            print(f"  [ALERTA] {v}")
+    else:
+        print("  [OK] Todas las rutas del ecosistema residen estrictamente dentro de la jerarquía.")
 
     # 1. Rutas del Entorno
     print("\n--- [1] JERARQUÍA DE DIRECTORIOS Y CONFIGURACIÓN (.dev) ---")
@@ -155,6 +180,8 @@ def mostrar_informe() -> None:
     print("  COMANDOS DISPONIBLES:")
     print("    python gestor_entorno.py sincronizar          (Aplica variables y config VSCode)")
     print("    python gestor_entorno.py reconstruir-visor    (Compila Visor3D con dotnet)")
+    print("    python gestor_entorno.py dependencias         (Verifica .NET, DLLs nativas, Python y Godot)")
+    print("    python gestor_entorno.py validar-frontera     (Comprueba que nada salga de E:\\WoldVirtualP2P3D)")
     print("    python gestor_entorno.py blockchain [iniciar|detener|reiniciar|estado]")
     print("    python gestor_entorno.py lucia [iniciar|detener|reiniciar|estado]")
     print("    python gestor_entorno.py todo                 (Sincroniza, inicia servicios y compila)")
@@ -162,15 +189,26 @@ def mostrar_informe() -> None:
     print("=" * 76)
 
 
+@asegurar_frontera
+@auditar_operacion_entorno("comando_todo")
 def comando_todo() -> int:
     """Orquesta la sincronización completa, arranque de servicios y compilación del visor."""
-    print(">>> 1/4 Sincronizando entorno y variables...")
+    print(">>> 0/5 Comprobando contención de fronteras del repositorio...")
+    f_ok, f_errs = validar_frontera_carpetas()
+    if not f_ok:
+        print("  [ERROR FATAL] Se detectaron violaciones en la jerarquía de directorios:")
+        for e in f_errs:
+            print(f"    - {e}")
+        return 1
+    print("  [OK] Todas las rutas se mantienen confinadas dentro del repositorio.")
+
+    print("\n>>> 1/5 Sincronizando entorno y variables...")
     configurar_variables_entorno()
     traer_pytest_ini()
     actualizar_vscode_config()
     limpiar_cache_raiz()
 
-    print("\n>>> 2/4 Verificando/Iniciando Servidor Blockchain (8545)...")
+    print("\n>>> 2/5 Verificando/Iniciando Servidor Blockchain (8545)...")
     st_b = estado_blockchain()
     if not st_b["abierto"]:
         ok_b, msg_b = iniciar_blockchain(segundo_plano=True)
@@ -178,7 +216,7 @@ def comando_todo() -> int:
     else:
         print("  Servidor Blockchain ya se encuentra activo en el puerto 8545.")
 
-    print("\n>>> 3/4 Verificando/Iniciando Servidor LucIA 3D (8765)...")
+    print("\n>>> 3/5 Verificando/Iniciando Servidor LucIA 3D (8765)...")
     st_l = estado_lucia()
     if not st_l["abierto"]:
         ok_l, msg_l = iniciar_lucia(segundo_plano=True)
@@ -186,7 +224,7 @@ def comando_todo() -> int:
     else:
         print("  Servidor LucIA ya se encuentra activo en el puerto 8765.")
 
-    print("\n>>> 4/4 Reconstruyendo Visor 3D...")
+    print("\n>>> 4/5 Reconstruyendo Visor 3D...")
     ok_v, msg_v = reconstruir_visor()
     print(f"  {msg_v}")
 
@@ -292,6 +330,39 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     elif sub == "vscode":
         actualizar_vscode_config()
+        return 0
+
+    elif sub in ("dependencias", "deps"):
+        print(formatear_informe_dependencias())
+        return 0
+
+    elif sub in ("validar-frontera", "validar_frontera", "frontera", "aislamiento"):
+        ok, errs = validar_frontera_carpetas()
+        print("=" * 76)
+        print("  VALIDACIÓN DE AISLAMIENTO Y FRONTERAS DEL REPOSITORIO (.dev)")
+        print("=" * 76)
+        print(f"Raíz permitida: {REPO_ROOT}")
+        if ok:
+            print("[OK] Aislamiento íntegro: Ningún módulo ni proceso escapa del repositorio.")
+            return 0
+        else:
+            print("[FALLO] Se detectaron rutas fuera del repositorio:")
+            for e in errs:
+                print(f"  - {e}")
+            return 1
+
+    elif sub in ("auditoria", "audit"):
+        if ARCHIVO_AUDITORIA_ENTORNO.is_file():
+            print("=" * 76)
+            print(f"  REGISTRO DE AUDITORÍA DE ENTORNO ({ARCHIVO_AUDITORIA_ENTORNO.name})")
+            print("=" * 76)
+            lineas = ARCHIVO_AUDITORIA_ENTORNO.read_text(encoding="utf-8").strip().splitlines()
+            ultimas = lineas[-20:] if len(lineas) > 20 else lineas
+            for l in ultimas:
+                print(f"  {l}")
+            print(f"\nTotal registros: {len(lineas)}")
+        else:
+            print("No hay eventos de auditoría registrados todavía.")
         return 0
 
     elif sub == "limpiar":

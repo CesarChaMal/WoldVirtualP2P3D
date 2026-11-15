@@ -83,3 +83,45 @@ LANZAR_BAT: Path = VISOR_HERRAMIENTAS_DIR / "Lanzar.bat"
 # Motor y Proyecto Godot
 GODOT_PROY_DIR: Path = TLLDCD_SRC / "MTBGT" / "WoldVirtualP2P3D"
 GODOT_PROJECT_FILE: Path = GODOT_PROY_DIR / "project.godot"
+
+
+# --- Control de Fronteras y Contención de Rutas ---
+def asegurar_ruta_en_repositorio(ruta: Path | str) -> bool:
+    """Verifica de forma estricta que una ruta resuelva dentro de REPO_ROOT (E:\\WoldVirtualP2P3D).
+    Evita path traversal o escapes fuera de la jerarquía canónica."""
+    try:
+        p = Path(ruta).resolve()
+        return p == REPO_ROOT or REPO_ROOT in p.parents
+    except Exception:
+        return False
+
+
+def validar_frontera_carpetas() -> tuple[bool, list[str]]:
+    """Comprueba que todos los directorios canónicos del ecosistema permanezcan estrictamente
+    dentro de la jerarquía de REPO_ROOT, sin referencias que salgan a otras unidades o carpetas."""
+    rutas_a_validar = [
+        ("VERSION_DIR", VERSION_DIR),
+        ("CONTRRF_DIR", CONTRRF_DIR),
+        ("RFC_DIR", RFC_DIR),
+        ("CONTRUCCION_DIR", CONTRUCCION_DIR),
+        ("DEV_DIR", DEV_DIR),
+        ("PYTHON_DIR", PYTHON_DIR),
+        ("VENV_DIR", VENV_DIR),
+        ("TLLDCD_DIR", TLLDCD_DIR),
+        ("TLLDCD_SRC", TLLDCD_SRC),
+        ("BLOCKCHAIN_DIR", BLOCKCHAIN_DIR),
+        ("LUCIA_DIR", LUCIA_DIR),
+        ("VISOR_BASE_DIR", VISOR_BASE_DIR),
+        ("VISOR_HERRAMIENTAS_DIR", VISOR_HERRAMIENTAS_DIR),
+        ("SEGURIDAD_DIR", SEGURIDAD_DIR),
+        ("SEGURIDAD_SESION_UNICA_DIR", SEGURIDAD_SESION_UNICA_DIR),
+        ("GODOT_PROY_DIR", GODOT_PROY_DIR),
+    ]
+
+    errores = []
+    for nombre, ruta in rutas_a_validar:
+        if not asegurar_ruta_en_repositorio(ruta):
+            errores.append(f"VIOLACIÓN DE FRONTERA: {nombre} ({ruta}) se resuelve fuera de {REPO_ROOT}")
+
+    return len(errores) == 0, errores
+

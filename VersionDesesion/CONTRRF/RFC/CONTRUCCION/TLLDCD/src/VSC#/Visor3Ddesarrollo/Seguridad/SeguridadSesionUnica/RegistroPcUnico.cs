@@ -1,190 +1,203 @@
+// =============================================================================
+// RegistroPcUnico.cs
+// Namespace  : Visor3D.Seguridad.SesionUnica
+// Proyecto   : Visor3D — Adaptador de Cuenta Única por PC y Cadena Local (v2)
+// =============================================================================
+
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 
 namespace Visor3D.Seguridad.SesionUnica
 {
     /// <summary>
-    /// Almacena y verifica el registro de "cuenta única por PC".
+    /// Adaptador de alto nivel para el registro y consulta de cuenta única por PC (1 bloque = 1 PC).
     ///
-    /// Flujo:
-    ///   1. Al crear una cuenta, se llama a <see cref="RegistrarCuenta"/>.
-    ///      Se serializa un "sello" con el identificador de máquina (HKDF) y
-    ///      el UUID del usuario, firmado con HMAC-SHA256 para detectar
-    ///      manipulaciones del JSON.
-    ///   2. Al abrir <see cref="RegistroWindow"/>, se llama a
-    ///      <see cref="YaExisteCuentaEnEstePc"/>. Si devuelve true, se bloquea
-    ///      la pantalla de registro.
-    ///   3. El sello vive en AppData (no junto al .exe) para persistir aunque
-    ///      el usuario borre/mueva el ejecutable.
-    ///
-    /// Seguridad:
-    ///   • El sello es un JSON firmado con HMAC-SHA256. Modificarlo a mano
-    ///     invalida la firma y el visor lo detecta (⇒ se trata como sello
-    ///     presente pero corrupto → tampoco deja crear cuenta nueva).
-    ///   • El identificador de máquina (HKDF) nunca se guarda en texto plano;
-    ///     solo se guarda el HMAC del sello completo.
-    ///   • La comprobación usa comparación de tiempo constante para evitar
-    ///     ataques de timing.
+    /// Mantiene compatibilidad total con la API previa consumida por MainWindow, FormularioUsuarioWindow
+    /// y PerfilUsuario, integrando el modelo de cadena local, separación estricta de dominios
+    /// y recuperación de tres niveles.
     /// </summary>
     public static class RegistroPcUnico
     {
-        // ── Rutas ────────────────────────────────────────────────────────────
-
-        /// <summary>
-        /// Directorio donde se guarda el sello. Usar LocalApplicationData
-        /// garantiza que persiste entre versiones del visor.
-        /// </summary>
-        private static readonly string SelloDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "WoldVirtualP2P3D", "Seguridad");
-
-        private static string SelloPath => Path.Combine(SelloDir, "pc_sello.json");
-
-        // ── Clave de firma (derivada de la huella + salt fijo) ────────────────
-        // La clave HMAC no se guarda en disco: se recalcula siempre desde WMI.
-        // Un atacante que copie pc_sello.json a otro PC obtiene una clave HMAC
-        // diferente → la firma no coincide → se rechaza.
-        private static byte[] ClaveFirma()
-        {
-            byte[] idBytes = Encoding.UTF8.GetBytes(MaquinaHuellaDigital.Obtener());
-            byte[] appSalt = Encoding.UTF8.GetBytes("WoldVirtualP2P3D::HmacFirma::v1");
-            return HKDF.DeriveKey(HashAlgorithmName.SHA256, idBytes, 32, appSalt,
-                                  Encoding.UTF8.GetBytes("sello-firma"));
-        }
-
-        // ─────────────────────────────────────────────────────────────────────
-        //  API pública
-        // ─────────────────────────────────────────────────────────────────────
-
         /// <summary>
         /// Comprueba si ya existe una cuenta registrada en este PC.
-        /// Devuelve true si el sello existe Y es válido para esta máquina.
-        /// Si el sello está corrupto/manipulado también devuelve true (no
-        /// permite crear una segunda cuenta aunque el sello esté dañado).
+        /// Devuelve true si el sello o bloque génesis existe y es válido, o si se encuentra en anomalía.
+        /// Devuelve false únicamente si el equipo está libre para un registro nuevo (ambos anclajes y cadena ausentes).
         /// </summary>
         public static bool YaExisteCuentaEnEstePc()
         {
-            if (!File.Exists(SelloPath)) return false;
-
             try
             {
-                string json = File.ReadAllText(SelloPath, Encoding.UTF8);
-                var sello = JsonSerializer.Deserialize<SelloJson>(json);
-                if (sello == null) return true; // JSON corrupto → bloqueamos
+                var resultado = VerificadorSello.EvaluarMatrizSeguridad();
 
-                // Verificar firma HMAC con comparación de tiempo constante
-                byte[] firmaEsperada = ComputarFirma(sello.maquina_id, sello.uuid, sello.creado);
-                byte[] firmaLeida    = Convert.FromHexString(sello.firma ?? "");
+                switch (resultado.Estado)
+                {
+                    case EstadoVerificacionSello.SinSelloNuevoRegistro:
+                        return false;
 
-                if (!CryptographicOperations.FixedTimeEquals(firmaEsperada, firmaLeida))
-                    return true; // firma inválida → sello presente pero manipulado → bloqueamos
+                    case EstadoVerificacionSello.Valido:
+                    case EstadoVerificacionSello.AutorreparadoDesdeArchivo:
+                    case EstadoVerificacionSello.AutorreparadoDesdeRegistro:
+                    case EstadoVerificacionSello.CadenaIntegraRequiereConfirmacionRiesgo:
+                        return true;
 
-                // Comprobar que el sello es de ESTA máquina
-                // (si lo copiaron de otro PC, el HMAC ya falló; esta es defensa adicional)
-                string idActual = MaquinaHuellaDigital.Obtener();
-                byte[] idEsperado = Encoding.UTF8.GetBytes(idActual);
-                byte[] idGuardado = Encoding.UTF8.GetBytes(sello.maquina_id ?? "");
-                if (!CryptographicOperations.FixedTimeEquals(idEsperado, idGuardado))
-                    return false; // sello de otra máquina (hardware diferente) → OK crear cuenta
+                    case EstadoVerificacionSello.RollbackDetectado:
+                    case EstadoVerificacionSello.BloqueadoRequiereRecuperacion:
+                    case EstadoVerificacionSello.BloqueadoPorExcesoIntentos:
+                    case EstadoVerificacionSello.CadenaCorrupta:
+                        // En cualquier estado anómalo o de bloqueo se impide crear una nueva cuenta
+                        return true;
 
-                return true; // sello válido y de esta máquina → bloqueamos
+                    default:
+                        return true;
+                }
             }
-            catch
+            catch (Exception ex)
             {
-                // Error leyendo/parseando: sello presente pero ilegible → bloqueamos
+                System.Diagnostics.Debug.WriteLine($"[RegistroPcUnico] Error evaluando estado: {ex.Message}");
                 return true;
             }
         }
 
         /// <summary>
-        /// Registra la cuenta recién creada en este PC.
-        /// Debe llamarse JUSTO DESPUÉS de que el usuario complete el registro
-        /// (al final de <see cref="FormularioUsuarioWindow"/>).
+        /// Registra la cuenta recién creada en este PC (modelo 1 bloque = 1 usuario).
         /// </summary>
         /// <param name="uuid">UUID único del usuario recién creado.</param>
-        /// <exception cref="InvalidOperationException">
-        /// Si ya existe una cuenta registrada en este PC.
-        /// </exception>
         public static void RegistrarCuenta(string uuid)
         {
-            if (YaExisteCuentaEnEstePc())
-                throw new InvalidOperationException(
-                    "Ya existe una cuenta registrada en este equipo.");
-
-            string maquinaId = MaquinaHuellaDigital.Obtener();
-            string creado     = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
-            string firma      = Convert.ToHexString(ComputarFirma(maquinaId, uuid, creado));
-
-            var sello = new SelloJson
-            {
-                maquina_id = maquinaId,
-                uuid       = uuid,
-                creado     = creado,
-                firma      = firma,
-                nota       = "Sello de cuenta única por PC — WoldVirtualP2P3D v1"
-            };
-
-            string json = JsonSerializer.Serialize(sello, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-            });
-
-            Directory.CreateDirectory(SelloDir);
-            // Escritura atómica: escribimos a .tmp y luego renombramos
-            string tmp = SelloPath + ".tmp";
-            File.WriteAllText(tmp, json, Encoding.UTF8);
-            File.Move(tmp, SelloPath, overwrite: true);
+            RegistrarCuenta(uuid, out _);
         }
 
         /// <summary>
-        /// Elimina el sello del PC actual. Solo debe usarse en escenarios
-        /// administrados (soporte técnico, reinstalación limpia autorizada).
+        /// Registra la cuenta recién creada generando el bloque génesis en la cadena local
+        /// y entregando el código de recuperación en Base32 con checksum (para mostrar una sola vez).
         /// </summary>
-        public static void EliminarSello()
+        public static void RegistrarCuenta(string uuid, out string codigoRecuperacionBase32)
         {
-            if (File.Exists(SelloPath))
-                File.Delete(SelloPath);
+            if (string.IsNullOrWhiteSpace(uuid))
+                throw new ArgumentException("El UUID de cuenta no puede ser nulo o vacío.", nameof(uuid));
+
+            if (YaExisteCuentaEnEstePc())
+                throw new InvalidOperationException("Ya existe una cuenta registrada en este equipo.");
+
+            byte[] secretoMaestro = AlmacenSeguro.ObtenerOcrearSecretoMaestro();
+            byte[] huellaBytes = MaquinaHuellaDigital.ObtenerBytes();
+
+            try
+            {
+                // Derivar idCuentaHash estable a partir del uuid con separación de dominios
+                byte[] uuidBytes = Encoding.UTF8.GetBytes(uuid);
+                byte[] domBytes = Encoding.UTF8.GetBytes(SelloCuenta.DominioCuentaId);
+                byte[] payloadId = new byte[domBytes.Length + uuidBytes.Length];
+                Buffer.BlockCopy(domBytes, 0, payloadId, 0, domBytes.Length);
+                Buffer.BlockCopy(uuidBytes, 0, payloadId, domBytes.Length, uuidBytes.Length);
+                using var sha = SHA256.Create();
+                string idCuentaHash = Convert.ToHexString(sha.ComputeHash(payloadId)).ToLowerInvariant();
+
+                // Generar código de recuperación de 32 bytes y sal de 32 bytes
+                SelloCuenta.GenerarNuevoParRecuperacion(
+                    out byte[] rawCode,
+                    out string saltHex,
+                    out string compromisoHex,
+                    out codigoRecuperacionBase32);
+
+                CryptographicOperations.ZeroMemory(rawCode);
+
+                long ultimoContador = AlmacenSeguro.LeerUltimoContadorRegistro();
+                long nuevoContador = Math.Max(1, ultimoContador + 1);
+
+                var hwLista = MaquinaHuellaDigital.ObtenerComponentes().ObtenerLista();
+
+                var claveEcdsa = ProveedorClaves.Instancia.ObtenerOCrearClaveEcdsa();
+
+                var nuevoBloque = new SelloCuenta
+                {
+                    VersionFormato = SelloCuenta.VersionActual,
+                    IdCuentaHash = idCuentaHash,
+                    Indice = 0,
+                    HashPrevio = new string('0', 64),
+                    Contador = nuevoContador,
+                    TimestampUtc = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    HuellaAnonimizada = MaquinaHuellaDigital.Obtener(),
+                    Salt = saltHex,
+                    CompromisoRecuperacion = compromisoHex,
+                    KeyId = "k1_ecdsa_p256",
+                    ComponentesHardware = new List<string>(hwLista),
+                    Nota = "Bloque Génesis 1:1 — WoldVirtualP2P3D Zero Trust v3"
+                };
+
+                // Guardar en anclajes duales y cadena local append-only con firma ECDSA v3
+                AlmacenSeguro.GuardarDualV3(nuevoBloque, claveEcdsa, huellaBytes);
+
+                // Incrementar contador en guardia anti-rollback
+                AntiRollbackGuardia.IncrementarContador(nuevoContador, secretoMaestro);
+
+                AuditoriaSeguridad.Registrar(
+                    EventoAuditoria.NuevoRegistro,
+                    "RegistroPcUnico",
+                    "BloqueGénesisCreado",
+                    $"IdCuenta={idCuentaHash[..Math.Min(8, idCuentaHash.Length)]}… Contador={nuevoContador}");
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(secretoMaestro);
+            }
         }
 
         /// <summary>
-        /// Devuelve el UUID guardado en el sello, o null si no hay sello válido.
+        /// Devuelve el identificador de cuenta guardado en el bloque activo, o null si no hay sello legible.
         /// </summary>
         public static string? ObtenerUuidRegistrado()
         {
-            if (!File.Exists(SelloPath)) return null;
             try
             {
-                string json = File.ReadAllText(SelloPath, Encoding.UTF8);
-                var sello = JsonSerializer.Deserialize<SelloJson>(json);
-                return sello?.uuid;
+                var revision = VerificadorSello.EvaluarMatrizSeguridad();
+                if (revision.SelloActivo != null && !string.IsNullOrWhiteSpace(revision.SelloActivo.IdCuentaHash))
+                {
+                    return revision.SelloActivo.IdCuentaHash;
+                }
+
+                string? jsonArchivo = AlmacenSeguro.LeerAnclajeArchivo();
+                if (!string.IsNullOrWhiteSpace(jsonArchivo))
+                {
+                    var sello = SelloCuenta.Deserializar(jsonArchivo);
+                    return sello?.IdCuentaHash;
+                }
+
+                string? jsonRegistro = AlmacenSeguro.LeerAnclajeRegistro();
+                if (!string.IsNullOrWhiteSpace(jsonRegistro))
+                {
+                    var sello = SelloCuenta.Deserializar(jsonRegistro);
+                    return sello?.IdCuentaHash;
+                }
+
+                return null;
             }
-            catch { return null; }
+            catch
+            {
+                return null;
+            }
         }
 
-        // ─────────────────────────────────────────────────────────────────────
-        //  Helpers privados
-        // ─────────────────────────────────────────────────────────────────────
-
-        private static byte[] ComputarFirma(string? maquinaId, string? uuid, string? creado)
+        /// <summary>
+        /// Elimina los anclajes y la cadena local del PC actual.
+        /// Solo debe usarse en escenarios administrados de reinicio limpio o soporte técnico.
+        /// </summary>
+        public static void EliminarSello()
         {
-            string mensaje = $"{maquinaId}|{uuid}|{creado}";
-            byte[] msgBytes = Encoding.UTF8.GetBytes(mensaje);
-            using var hmac = new HMACSHA256(ClaveFirma());
-            return hmac.ComputeHash(msgBytes);
+            AlmacenSeguro.EliminarAnclajesParaSoporte();
+            AuditoriaSeguridad.Registrar(
+                EventoAuditoria.OperacionIPC,
+                "RegistroPcUnico",
+                "SelloEliminado",
+                "Anclajes duales y cadena purgados por soporte.");
         }
 
-        // DTO de serialización — campos en snake_case para legibilidad del JSON
-        private sealed class SelloJson
-        {
-            public string? maquina_id { get; set; }
-            public string? uuid       { get; set; }
-            public string? creado     { get; set; }
-            public string? firma      { get; set; }
-            public string? nota       { get; set; }
-        }
+        /// <summary>
+        /// Devuelve la huella digital hardware del equipo actual (HKDF SHA-256 en hex).
+        /// </summary>
+        public static string Obtener() => MaquinaHuellaDigital.Obtener();
     }
 }
