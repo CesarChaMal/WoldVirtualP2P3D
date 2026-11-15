@@ -40,24 +40,44 @@ from typing import Any
 __version__ = "0.9.1"
 
 _DIR_MODULO = Path(__file__).resolve().parent
-if str(_DIR_MODULO) not in sys.path:
-    sys.path.insert(0, str(_DIR_MODULO))
+_STM_RFC_DIR = _DIR_MODULO.parent
+_CONTRUCCION_DIR = _STM_RFC_DIR.parent
+_RFC_DIR = _CONTRUCCION_DIR.parent
+_CONTRRF_DIR = _RFC_DIR.parent
+_VERSION_DIR = _CONTRRF_DIR.parent
+_RAIZ_REPO = _VERSION_DIR.parent if _VERSION_DIR.name == "VersionDesesion" else _VERSION_DIR
 
-import VersionDesesion.CONTRRF.RFC.CONTRUCCION.STM_RFC.STM_RFPRMN.RFPRMN as _RFPRMN  # noqa: E402
+for _p in (_DIR_MODULO, _CONTRUCCION_DIR, _RAIZ_REPO):
+    if _p and str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+try:
+    import VersionDesesion.CONTRRF.RFC.CONTRUCCION.STM_RFC.STM_RFPRMN.RFPRMN as _RFPRMN  # noqa: E402
+except ModuleNotFoundError:
+    try:
+        import RFPRMN as _RFPRMN  # noqa: E402
+    except ModuleNotFoundError:
+        from . import RFPRMN as _RFPRMN  # noqa: E402
 
 RFPRMN = _RFPRMN.RFPRMN
 
-#: Ruta y nombre que usa el comando cuando no se indican.
-RUTA_PREDETERMINADA = (
-    r"E:\WoldVirtualP2P3D\VersionDesesion\CONTRRF\RFC\CONTRUCCION\LCtrabajando"
+_LCTRABAJANDO = (
+    _CONTRUCCION_DIR / "LCtrabajando"
+    if _CONTRUCCION_DIR.name == "CONTRUCCION"
+    else Path(r"E:\WoldVirtualP2P3D\VersionDesesion\CONTRRF\RFC\CONTRUCCION\LCtrabajando")
 )
+_TLLDCD_SRC = (
+    _CONTRUCCION_DIR / "TLLDCD" / "src"
+    if _CONTRUCCION_DIR.name == "CONTRUCCION"
+    else Path(r"E:\WoldVirtualP2P3D\VersionDesesion\CONTRRF\RFC\CONTRUCCION\TLLDCD\src")
+)
+
+#: Ruta y nombre que usa el comando cuando no se indican.
+RUTA_PREDETERMINADA = str(_LCTRABAJANDO)
 NOMBRE_PREDETERMINADO = "src"
 
 #: Segunda acción: ``LCtrabajando/src/LC_STM/RedNeuronal`` y sus familias.
-RUTA_RED_PREDETERMINADA = (
-    r"E:\WoldVirtualP2P3D\VersionDesesion\CONTRRF\RFC\CONTRUCCION"
-    r"\LCtrabajando\src\LC_STM"
-)
+RUTA_RED_PREDETERMINADA = str(_LCTRABAJANDO / "src" / "LC_STM")
 NOMBRE_RED_PREDETERMINADO = "RedNeuronal"
 SUBCARPETAS_RED: tuple[str, ...] = (
     "CELEBRO", "ENRN", "RF_EN", "RF_SL", "RNP", "SLRN",
@@ -69,10 +89,7 @@ COMANDO_MTBGT = "crear mtbgt"
 COMANDO_TODO = "crear todo"
 
 #: Tercera acción: ``LCtrabajando/src/MTBGT`` solo con carpetas por ahora.
-RUTA_MTBGT_PREDETERMINADA = (
-    r"E:\WoldVirtualP2P3D\VersionDesesion\CONTRRF\RFC\CONTRUCCION"
-    r"\LCtrabajando\src\MTBGT"
-)
+RUTA_MTBGT_PREDETERMINADA = str(_LCTRABAJANDO / "src" / "MTBGT")
 NOMBRE_MTBGT_PREDETERMINADO = "MTBGT"
 SUBCARPETAS_MTBGT: tuple[str, ...] = (
     ".godot", "addons", "AreaDeTrabajo", "gdscrip", "gdshader", "scene",
@@ -85,9 +102,7 @@ ARCHIVOS_MTBGT: tuple[str, ...] = ()
 USAR_RED_NEURONAL = True
 
 #: Fuente oficial de la estructura de carpetas.
-RUTA_FUENTE_PREDETERMINADA = (
-    r"E:\WoldVirtualP2P3D\VersionDesesion\CONTRRF\RFC\CONTRUCCION\TLLDCD\src"
-)
+RUTA_FUENTE_PREDETERMINADA = str(_TLLDCD_SRC)
 
 #: Jerarquía base de respaldo si la fuente no está disponible.
 SUBCARPETAS_SRC_BASE: tuple[str, ...] = (
@@ -180,6 +195,9 @@ def localizar_red_neuronal() -> Path:
             base / "CONTRRF" / _RUTA_RED_RELATIVA,
             base / "VersionDesesion" / "CONTRRF" / _RUTA_RED_RELATIVA,
             base / "TLLDCD" / "src" / "LC_STM" / "RedNeuronal",
+            base / "TLLDCD" / "src" / "LC_STM" / "red_neuronal",
+            base / "Refactorizacion" / "src" / "LC_STM" / "RedNeuronal",
+            base / "CONTRUCCION" / "Refactorizacion" / "src" / "LC_STM" / "RedNeuronal",
         ))
     vistos: set[Path] = set()
     for candidato in candidatos:
