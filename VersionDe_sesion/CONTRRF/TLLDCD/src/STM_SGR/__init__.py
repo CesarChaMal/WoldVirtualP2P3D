@@ -1,3 +1,0 @@
-"""STM_SGR package."""
-
-from __future__ import annotations
