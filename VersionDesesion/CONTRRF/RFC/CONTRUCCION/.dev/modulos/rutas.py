@@ -63,6 +63,18 @@ VISOR_CSPROJ: Path = VISOR_HERRAMIENTAS_DIR / "Visor3D.csproj"
 VISOR_OUTPUT_DLL: Path = VISOR_HERRAMIENTAS_DIR / "bin" / "Debug" / "net8.0-windows" / "win-x64" / "LCDMWoldVirtualP2P3Dv2.8.4.dll"
 VISOR_OUTPUT_EXE: Path = VISOR_HERRAMIENTAS_DIR / "bin" / "Debug" / "net8.0-windows" / "win-x64" / "LCDMWoldVirtualP2P3Dv2.8.4.exe"
 
+# Módulos de Seguridad y Sesión Única del Visor
+SEGURIDAD_DIR: Path = VISOR_BASE_DIR / "Seguridad"
+SEGURIDAD_SESION_UNICA_DIR: Path = SEGURIDAD_DIR / "SeguridadSesionUnica"
+SMTPLC_DIR: Path = SEGURIDAD_DIR / "SMTPLC"
+
+# Archivos de SeguridadSesionUnica
+ARRANQUE_CUENTA_CS: Path = SEGURIDAD_SESION_UNICA_DIR / "ArranqueCuenta.cs"
+MAQUINA_HUELLA_CS: Path = SEGURIDAD_SESION_UNICA_DIR / "MaquinaHuellaDigital.cs"
+REGISTRO_PC_UNICO_CS: Path = SEGURIDAD_SESION_UNICA_DIR / "RegistroPcUnico.cs"
+REINICIO_CUENTA_CS: Path = SEGURIDAD_SESION_UNICA_DIR / "ReinicioCuenta.cs"
+SESION_UNICA_GUARDA_CS: Path = SEGURIDAD_SESION_UNICA_DIR / "SesionUnicaGuarda.cs"
+
 # Scripts del Visor
 LUCIA_BAT_VISOR: Path = VISOR_HERRAMIENTAS_DIR / "Iniciar_Lucia_Visor.bat"
 LUCIA_PS1_VISOR: Path = VISOR_HERRAMIENTAS_DIR / "Iniciar_Lucia_Visor.ps1"

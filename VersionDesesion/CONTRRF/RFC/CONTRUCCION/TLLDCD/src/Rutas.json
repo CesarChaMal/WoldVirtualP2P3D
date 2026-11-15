@@ -121,7 +121,10 @@
       "raiz": "VSC#",
       "secciones": {
         "Visor3Ddesarrollo": "VSC#/Visor3Ddesarrollo",
-        "webnodo": "VSC#/Visor3Ddesarrollo/webnodo"
+        "webnodo": "VSC#/Visor3Ddesarrollo/webnodo",
+        "Seguridad": "VSC#/Visor3Ddesarrollo/Seguridad",
+        "SeguridadSesionUnica": "VSC#/Visor3Ddesarrollo/Seguridad/SeguridadSesionUnica",
+        "SMTPLC": "VSC#/Visor3Ddesarrollo/Seguridad/SMTPLC"
       }
     },
     "MTBGT": {

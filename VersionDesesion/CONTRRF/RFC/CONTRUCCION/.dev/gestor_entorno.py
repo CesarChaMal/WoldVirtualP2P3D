@@ -59,6 +59,9 @@ from modulos import (  # noqa: E402
     VISOR_HERRAMIENTAS_DIR,
     VISOR_OUTPUT_DLL,
     VISOR_OUTPUT_EXE,
+    SEGURIDAD_DIR,
+    SEGURIDAD_SESION_UNICA_DIR,
+    SMTPLC_DIR,
     VSCODE_DIR,
     actualizar_vscode_config,
     comprobar_dotnet,
@@ -145,6 +148,8 @@ def mostrar_informe() -> None:
     if st_visor["dll_fecha_mod"]:
         print(f"  [INFO]     Última modificación: {st_visor['dll_fecha_mod']}")
     print(f"  {'[OK]' if st_visor['godot_proy_existe'] else '[FALTA]':<10} Proyecto Godot 3D: {st_visor['ruta_godot_proy']}")
+    modulos_sesion = list(SEGURIDAD_SESION_UNICA_DIR.glob("*.cs")) if SEGURIDAD_SESION_UNICA_DIR.is_dir() else []
+    print(f"  {'[OK]' if SEGURIDAD_SESION_UNICA_DIR.is_dir() else '[FALTA]':<10} Seguridad Sesión Única: {SEGURIDAD_SESION_UNICA_DIR} ({len(modulos_sesion)} módulos CS)")
 
     print("\n" + "=" * 76)
     print("  COMANDOS DISPONIBLES:")
