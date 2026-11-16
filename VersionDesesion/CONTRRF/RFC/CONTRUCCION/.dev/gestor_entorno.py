@@ -21,6 +21,10 @@ DEV_DIR_ROOT = Path(__file__).resolve().parent
 if str(DEV_DIR_ROOT) not in sys.path:
     sys.path.insert(0, str(DEV_DIR_ROOT))
 
+# Todo bytecode del ecosistema se compila dentro de .dev/pycache: nunca se
+# crean carpetas __pycache__ en el árbol de fuentes.
+sys.pycache_prefix = str(DEV_DIR_ROOT / "pycache")
+
 # Importar desde el paquete modular de .dev
 from modulos import (  # noqa: E402
     BLOCKCHAIN_DIR,

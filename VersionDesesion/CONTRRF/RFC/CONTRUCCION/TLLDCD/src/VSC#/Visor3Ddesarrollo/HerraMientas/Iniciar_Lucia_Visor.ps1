@@ -14,6 +14,8 @@ if (-not (Test-Path $py)) { $py = Join-Path $env:WVP_LEGACY_SRC "LC_STM\python\p
 
 $srv = Join-Path $src "MTBGT\WoldVirtualP2P3D\lucia3D\GLTF_lucIA\celebro_3D\puente_3D\servidor_lucia.py"
 if (-not (Test-Path $srv)) { $srv = Join-Path $env:WVP_LEGACY_SRC "MTBGT\WoldVirtualP2P3D\lucia3D\GLTF_lucIA\celebro_3D\puente_3D\servidor_lucia.py" }
+# Todo el bytecode del ecosistema se compila dentro de .dev\pycache
+$env:PYTHONPYCACHEPREFIX = Join-Path $devDir "pycache"
 $logDir = Join-Path $env:LOCALAPPDATA "WoldVirtualP2P3D\logs"
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force -ErrorAction SilentlyContinue | Out-Null }
 $log = Join-Path $logDir "lucia_ps.log"

@@ -33,6 +33,7 @@ VENV_PYTHONW: Path = VENV_DIR / "Scripts" / "pythonw.exe"
 
 PYTEST_CACHE_DIR: Path = DEV_DIR / ".pytest_cache"
 RUFF_CACHE_DIR: Path = DEV_DIR / ".ruff_cache"
+PYCACHE_DIR: Path = DEV_DIR / "pycache"
 IPFS_DIR: Path = DEV_DIR / ".ipfs"
 VSCODE_DIR: Path = DEV_DIR / ".vscode"
 DEV_PYTEST_INI: Path = DEV_DIR / "pytest.ini"

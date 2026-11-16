@@ -15,6 +15,9 @@ if not exist "%PY%" set "PY=%WVP_LEGACY_SRC%\LC_STM\python\pythonw.exe"
 set "SRV=%SRC%\MTBGT\WoldVirtualP2P3D\lucia3D\GLTF_lucIA\celebro_3D\puente_3D\servidor_lucia.py"
 if not exist "%SRV%" set "SRV=%WVP_LEGACY_SRC%\MTBGT\WoldVirtualP2P3D\lucia3D\GLTF_lucIA\celebro_3D\puente_3D\servidor_lucia.py"
 
+REM Todo el bytecode del ecosistema se compila dentro de .dev\pycache
+set "PYTHONPYCACHEPREFIX=%DEV_DIR%\pycache"
+
 set "LOGDIR=%LOCALAPPDATA%\WoldVirtualP2P3D\logs"
 if not exist "%LOGDIR%" mkdir "%LOGDIR%" 2>nul
 set "LOG=%LOGDIR%\lucia_bat.log"

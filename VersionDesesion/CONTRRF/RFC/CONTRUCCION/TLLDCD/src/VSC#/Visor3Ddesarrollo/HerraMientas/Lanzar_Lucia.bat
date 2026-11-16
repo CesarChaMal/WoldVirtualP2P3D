@@ -3,6 +3,7 @@ setlocal
 title Wold Virtual 3D - Servidor LucIA (8765)
 REM Arbol activo (..\..\.. desde HerraMientas = TLLDCD\src), .dev modular y archivo de versiones
 set "DEV_DIR=%~dp0..\..\..\..\..\.dev"
+set "PYTHONPYCACHEPREFIX=%DEV_DIR%\pycache"
 set "SRC=%~dp0..\..\.."
 if not defined WVP_LEGACY_SRC set "WVP_LEGACY_SRC=%~dp0..\..\..\..\..\..\..\..\..\VersionDesesion\SistemaPrincipal\PRY\Archivo\VersionesDeRefuerzo\actualizacion_c5074e3b\src"
 
