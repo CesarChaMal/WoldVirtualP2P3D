@@ -1,3 +1,4 @@
+using System;
 using Visor3D.Seguridad;
 using Visor3D.Services;
 
@@ -13,6 +14,14 @@ namespace Visor3D.Seguridad.SesionUnica
     {
         public static void AsegurarCicloRegistro(string? baseDir = null, string? godotDir = null)
         {
+            string[] args = Environment.GetCommandLineArgs();
+            if (Array.Exists(args, a => a.Equals("--seguridad-selftest", StringComparison.OrdinalIgnoreCase)))
+            {
+                int exitCode = SeguridadSelfTest.Run();
+                Environment.Exit(exitCode);
+                return;
+            }
+
             var estado = PerfilUsuario.Diagnosticar(out string motivo, baseDir);
 
             switch (estado)
