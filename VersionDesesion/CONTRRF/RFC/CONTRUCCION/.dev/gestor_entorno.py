@@ -92,6 +92,12 @@ from modulos import (  # noqa: E402
     requiere_venv_activo,
     auditar_operacion_entorno,
     ARCHIVO_AUDITORIA_ENTORNO,
+    carpeta_temporal,
+    listar_temporales,
+    limpiar_temporales,
+    entorno_bundle_visor,
+    lanzar_vista_previa,
+    formatear_informe_temporales,
 )
 
 
@@ -182,6 +188,8 @@ def mostrar_informe() -> None:
     print("    python gestor_entorno.py reconstruir-visor    (Compila Visor3D con dotnet)")
     print("    python gestor_entorno.py dependencias         (Verifica .NET, DLLs nativas, Python y Godot)")
     print("    python gestor_entorno.py validar-frontera     (Comprueba que nada salga de E:\\WoldVirtualP2P3D)")
+    print("    python gestor_entorno.py temporales [listar|crear <nombre>|limpiar]")
+    print("    python gestor_entorno.py vista-previa <exe> [args]  (Extracción del paquete en .dev)")
     print("    python gestor_entorno.py blockchain [iniciar|detener|reiniciar|estado]")
     print("    python gestor_entorno.py lucia [iniciar|detener|reiniciar|estado]")
     print("    python gestor_entorno.py todo                 (Sincroniza, inicia servicios y compila)")
@@ -317,6 +325,49 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             print(f"Acción desconocida para lucia: {accion}")
             return 1
+
+    elif sub in ("temporales", "temps", "tmp"):
+        accion = argv[1].lower() if len(argv) > 1 else "listar"
+        if accion in ("listar", "ls", "estado"):
+            print(formatear_informe_temporales())
+            return 0
+        elif accion in ("crear", "nuevo"):
+            if len(argv) < 3:
+                print("Uso: python gestor_entorno.py temporales crear <nombre> [--limpiar]")
+                return 1
+            try:
+                ruta = carpeta_temporal(argv[2], limpiar="--limpiar" in argv)
+            except (ValueError, PermissionError) as err:
+                print(f"[ERROR] {err}")
+                return 1
+            print(f"[OK] Espacio temporal listo: {ruta}")
+            return 0
+        elif accion in ("limpiar", "clean"):
+            conservar: List[str] = []
+            if "--conservar" in argv:
+                idx = argv.index("--conservar")
+                conservar = [a for a in argv[idx + 1:] if not a.startswith("-")]
+            borradas = limpiar_temporales(conservar)
+            if borradas:
+                for ruta in borradas:
+                    print(f"[OK] Eliminada: {ruta}")
+            else:
+                print("[OK] No había espacios temporales que eliminar.")
+            return 0
+        elif accion in ("bundle", "extraccion"):
+            env = entorno_bundle_visor()
+            print(f"[OK] Base de extracción single-file: {env['DOTNET_BUNDLE_EXTRACT_BASE_DIR']}")
+            return 0
+        else:
+            print(f"Acción desconocida para temporales: {accion}")
+            print("  Opciones: listar | crear <nombre> | limpiar [--conservar <n1> <n2>] | bundle")
+            return 1
+
+    elif sub in ("vista-previa", "vista_previa", "previsualizar"):
+        if len(argv) < 2:
+            print("Uso: python gestor_entorno.py vista-previa <ruta-exe> [args...]")
+            return 1
+        return lanzar_vista_previa(argv[1], argv[2:])
 
     elif sub == "todo":
         return comando_todo()

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import ctypes
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +24,7 @@ from .rutas import (
     VENV_PYTHON,
     VISOR_CSPROJ,
     VISOR_HERRAMIENTAS_DIR,
+    localizar_dotnet,
 )
 
 DEPENDENCIAS_JSON = DEV_DIR / "dependencias.json"
@@ -60,13 +60,16 @@ def verificar_dlls_nativas() -> List[Dict[str, Any]]:
 
 def verificar_dotnet_sdk() -> Dict[str, Any]:
     """Comprueba la disponibilidad del SDK de .NET."""
-    dotnet_path = shutil.which("dotnet")
-    if not dotnet_path:
+    dotnet_exe = localizar_dotnet()
+    if dotnet_exe is None:
         return {"disponible": False, "version": "No instalado", "ruta": None}
 
     try:
+        # Fuera de .dev: su global.json fija SDK 8.0.400 y bloquea la consulta
+        # de versión si esa revisión no está instalada.
         res = subprocess.run(
-            ["dotnet", "--version"],
+            [str(dotnet_exe), "--version"],
+            cwd=str(REPO_ROOT),
             capture_output=True,
             text=True,
             timeout=5,
@@ -78,10 +81,10 @@ def verificar_dotnet_sdk() -> Dict[str, Any]:
             "disponible": True,
             "version": version,
             "compatible": es_net8_plus,
-            "ruta": dotnet_path,
+            "ruta": str(dotnet_exe),
         }
     except Exception as ex:
-        return {"disponible": False, "version": str(ex), "ruta": dotnet_path}
+        return {"disponible": False, "version": str(ex), "ruta": str(dotnet_exe)}
 
 
 def verificar_paquetes_python() -> Dict[str, Any]:

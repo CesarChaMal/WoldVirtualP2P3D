@@ -7,6 +7,7 @@ Submódulos:
 - blockchain_mgr: Servidor oficial de blockchain y ledger (puerto 8545).
 - lucia_mgr: Servidor de LucIA 3D y conexión neuronal (puerto 8765).
 - visor_mgr: Reconstrucción, compilación y lanzamiento del visor 3D (Visor3D.csproj).
+- temporales: Espacios temporales _tmp_* y extracción single-file contenida en .dev.
 """
 from __future__ import annotations
 
@@ -99,6 +100,16 @@ from .visor_mgr import (
     lanzar_visor,
     reconstruir_visor,
 )
+from .temporales import (
+    DIR_BUNDLE,
+    PREFIJO_TEMPORAL,
+    carpeta_temporal,
+    entorno_bundle_visor,
+    formatear_informe_temporales,
+    lanzar_vista_previa,
+    limpiar_temporales,
+    listar_temporales,
+)
 
 __all__ = [
     # Rutas
@@ -182,4 +193,13 @@ __all__ = [
     "estado_visor",
     "reconstruir_visor",
     "lanzar_visor",
+    # Temporales
+    "PREFIJO_TEMPORAL",
+    "DIR_BUNDLE",
+    "carpeta_temporal",
+    "listar_temporales",
+    "limpiar_temporales",
+    "entorno_bundle_visor",
+    "lanzar_vista_previa",
+    "formatear_informe_temporales",
 ]

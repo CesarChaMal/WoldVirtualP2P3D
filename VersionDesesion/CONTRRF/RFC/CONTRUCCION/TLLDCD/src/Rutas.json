@@ -168,7 +168,7 @@
     "LC_constructor": "../../STM_RFC/STM_RFPRMN/LC_constructor.py"
   },
   "runtime": {
-    "lc_trabajando": "../../CONTRUCCION/LCtrabajando",
+    "lc_trabajando": "../../LCtrabajando",
     "psnrl": "STM_CH/PSNRL",
     "pycache": "STM_CH/pycache",
     "ledger": "STM_CH/blockchain_ledger.json",
