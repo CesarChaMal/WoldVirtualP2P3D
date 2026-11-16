@@ -2,14 +2,21 @@ extends Node3D
 ## Prueba visual de la Isla Única LucIA (DAO): única, en el origen, con su
 ## malla GLB, su carta DAO y las cuatro estaciones de registro.
 ##
+## Usa el mismo entorno que el metaverso: el WorldEnvironment y el sol de
+## WoldVirtual3DP2P.tscn y el bloque `ISLA3Dblock` real (1 isla + 1 mar por
+## bloque), con la DAO al centro y cuatro islas de jugador en cruz.
+##
 ## Uso:
 ##   godot --path <proyecto> res://lucia3D/IslaUnicaLucIA/PRUEBAS_VISUALES/PreviewDAO.tscn
 ## Guarda capturas en res://lucia3D/IslaUnicaLucIA/PRUEBAS_VISUALES/capturas/
 ## y termina con código 1 si alguna comprobación falla.
 
 const ESCENA_DAO := "res://lucia3D/IslaUnicaLucIA/ESCENAS/IslaUnicaLucIA.tscn"
+const RUTA_MUNDO := "res://WoldVirtual3DP2P.tscn"
+const RUTA_BLOQUE := "res://ESCENAS/sceneOPTM/constructor/chunk3DBLOCK/ISLA3Dblock.tscn"
 const SALIDA := "res://lucia3D/IslaUnicaLucIA/PRUEBAS_VISUALES/capturas"
-const NIVEL_MAR := 39.2
+const CHUNK := 199.5
+const SUPERFICIE_MAR := 39.06
 const GRUPO := "isla_unica_lucia"
 
 var _dao: Node3D = null
@@ -19,7 +26,7 @@ var _fallos: Array[String] = []
 func _ready() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(SALIDA))
 	_entorno()
-	_oceano()
+	_bloques_entorno()
 	_cargar_dao()
 	await _validar()
 	await _capturar_todo()
@@ -27,44 +34,63 @@ func _ready() -> void:
 	get_tree().quit(0 if _fallos.is_empty() else 1)
 
 
+## Cielo, niebla, glow y sol tal como los define la escena del mundo.
 func _entorno() -> void:
-	var cielo := ProceduralSkyMaterial.new()
-	cielo.sky_top_color = Color(0.14, 0.3, 0.52)
-	cielo.sky_horizon_color = Color(0.6, 0.71, 0.8)
-	cielo.ground_bottom_color = Color(0.07, 0.11, 0.15)
-	cielo.ground_horizon_color = Color(0.28, 0.36, 0.42)
-	var sky := Sky.new()
-	sky.sky_material = cielo
-	var env := Environment.new()
-	env.background_mode = Environment.BG_SKY
-	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.9
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	var mundo := WorldEnvironment.new()
-	mundo.environment = env
-	add_child(mundo)
-
-	var sol := DirectionalLight3D.new()
-	sol.rotation_degrees = Vector3(-48.0, -38.0, 0.0)
-	sol.light_energy = 1.5
-	sol.shadow_enabled = true
-	add_child(sol)
+	var recurso := load(RUTA_MUNDO)
+	if not (recurso is PackedScene):
+		_fallos.append("No carga la escena del mundo " + RUTA_MUNDO)
+		return
+	var mundo := (recurso as PackedScene).instantiate()
+	var ambiente := mundo.get_node_or_null("WorldEnvironment")
+	var sol := mundo.get_node_or_null("DirectionalLight3D")
+	if ambiente != null:
+		ambiente.owner = null
+		mundo.remove_child(ambiente)
+		add_child(ambiente)
+	if sol != null:
+		sol.owner = null
+		mundo.remove_child(sol)
+		add_child(sol)
+	mundo.free()
+	_check(ambiente != null and sol != null, "entorno del metaverso (cielo y sol)")
 
 
-func _oceano() -> void:
-	var agua := MeshInstance3D.new()
-	agua.name = "MarPrueba"
-	var plano := PlaneMesh.new()
-	plano.size = Vector2(6000.0, 6000.0)
-	agua.mesh = plano
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.05, 0.22, 0.33)
-	material.metallic = 0.35
-	material.roughness = 0.15
-	agua.material_override = material
-	agua.position = Vector3(0.0, NIVEL_MAR, 0.0)
-	add_child(agua)
+## Cada bloque del mundo es 1 isla + 1 mar. La DAO recibe su bloque de mar en
+## el origen, como hace ChunkManager, y las islas de jugador se colocan en cruz.
+func _bloques_entorno() -> void:
+	var plantilla := load(RUTA_BLOQUE)
+	if not (plantilla is PackedScene):
+		_fallos.append("No carga el bloque de isla " + RUTA_BLOQUE)
+		return
+	_montar_bloque(plantilla, Vector3.ZERO, "BloqueDAO", true)
+	var celdas := [Vector3(0, 0, -CHUNK), Vector3(CHUNK, 0, 0),
+			Vector3(-CHUNK, 0, 0), Vector3(0, 0, CHUNK)]
+	for i in celdas.size():
+		_montar_bloque(plantilla, celdas[i], "Isla_%d" % i, false)
+
+
+func _montar_bloque(plantilla: PackedScene, posicion: Vector3, nombre: String,
+		solo_mar: bool) -> void:
+	var bloque := plantilla.instantiate()
+	var oceano := bloque.get_node_or_null("Oceano3D")
+	var isla := bloque.get_node_or_null("ISLA3DCHUNK")
+	if oceano == null:
+		_fallos.append("El bloque de isla no trae Oceano3D")
+		bloque.free()
+		return
+	bloque.remove_child(oceano)
+	oceano.owner = null
+	if not solo_mar and isla != null:
+		bloque.remove_child(isla)
+		isla.owner = null
+	var contenedor := Node3D.new()
+	contenedor.name = nombre
+	contenedor.position = posicion
+	add_child(contenedor)
+	contenedor.add_child(oceano)
+	if not solo_mar and isla != null:
+		contenedor.add_child(isla)
+	bloque.free()
 
 
 func _cargar_dao() -> void:
@@ -102,6 +128,7 @@ func _validar() -> void:
 	print("[PRUEBA] sede de LucIA: ", _dao.call("sede_lucia"))
 	_medir_mallas(_dao)
 	await _sondear_suelo()
+	_validar_entorno()
 
 	var plaza = _dao.call("plaza_registro")
 	_check(plaza != null, "plaza de registro presente")
@@ -141,8 +168,9 @@ func _capturar_todo() -> void:
 	await _vista("02_plaza_cenital", Vector3(0, 320, 40), Vector3(0, 40, 0), 40.0)
 	await _vista("03_llegada_norte", Vector3(0, 45, -48), Vector3(0, 44, 0), 65.0)
 	await _vista("04_estacion_este", Vector3(50, 49, 8), Vector3(34, 42, 0), 55.0)
-	await _vista("05_perfil_mar", Vector3(185, 46, 0), Vector3(-20, 41, 0), 40.0)
+	await _vista("05_mar_metaverso", Vector3(0, 50, -96), Vector3(0, 44, -190), 50.0)
 	await _vista("06_llegada_sur", Vector3(0, 49, 52), Vector3(0, 42, 0), 60.0)
+	await _vista("07_archipielago", Vector3(270, 70, 270), Vector3(0, 34, 0), 55.0)
 
 
 func _vista(nombre: String, desde: Vector3, hacia: Vector3, fov: float) -> void:
@@ -172,6 +200,26 @@ func _medir_mallas(nodo: Node, sangria: String = "") -> void:
 					caja.get_center(), caja.size])
 	for hijo in nodo.get_children():
 		_medir_mallas(hijo, sangria + "-")
+
+
+func _validar_entorno() -> void:
+	var mares := 0
+	var islas := 0
+	for hijo in get_children():
+		if hijo.get_node_or_null("Oceano3D/Oceano") != null:
+			mares += 1
+		if hijo.get_node_or_null("ISLA3DCHUNK") != null:
+			islas += 1
+	_check(mares == 5, "1 mar por bloque (DAO + 4 islas)", "mares=%d" % mares)
+	_check(islas == 4, "4 islas de jugador en cruz", "islas=%d" % islas)
+	var mar := get_node_or_null("BloqueDAO/Oceano3D/Oceano") as MeshInstance3D
+	if mar == null or mar.mesh == null:
+		_check(false, "mar del metaverso en el bloque DAO")
+		return
+	var caja: AABB = mar.global_transform * mar.mesh.get_aabb()
+	var superficie := caja.position.y + caja.size.y
+	_check(absf(superficie - SUPERFICIE_MAR) < 0.6, "superficie del mar del metaverso",
+			"y=%.2f" % superficie)
 
 
 func _sondear_suelo() -> void:
