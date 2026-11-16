@@ -19,6 +19,7 @@ var _register_wait := 0.0
 func _ready() -> void:
 	layer = 100
 	visible = true
+	add_to_group("teleport_panel")
 	_build_ui()
 	# Conexion diferida para asegurar que TeleportManager ya hizo _ready
 	call_deferred("_late_connect")
@@ -106,6 +107,11 @@ func _toggle_panel() -> void:
 	_expanded = not _expanded
 	if panel != null:
 		panel.visible = _expanded
+
+
+## Abre/cierra el explorador desde otros nodos (por ejemplo, el portal de la DAO).
+func alternar() -> void:
+	_toggle_panel()
 
 func _process(delta: float) -> void:
 	if _cooldown > 0.0:

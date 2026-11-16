@@ -160,6 +160,64 @@ func _validar() -> void:
 			"progreso=%d" % int(plaza.call("progreso")))
 	plaza.call("reiniciar")
 
+	await _validar_interior()
+
+
+func _validar_interior() -> void:
+	var interior := _dao.get_node_or_null("InteriorDAO")
+	_check(interior != null, "interior de la DAO instanciado")
+	if interior == null:
+		return
+	var lucia = interior.call("lucia")
+	_check(lucia != null, "Lucía en su despacho")
+	if lucia != null:
+		var altura := float(lucia.global_position.y) - 41.7
+		_check(absf(altura - 0.5) < 0.2, "Lucía sobre el estrado del despacho",
+				"altura=%.2f" % altura)
+
+	var carrusel = interior.call("carrusel")
+	_check(carrusel != null, "carrusel de avatares de la DAO")
+	if carrusel != null:
+		var total := int(carrusel.call("total_estatuas"))
+		_check(total == 8, "carrusel con los 8 avatares del catálogo", "total=%d" % total)
+		var con_malla := 0
+		var en_pedestal := 0
+		for estatua in carrusel.call("estatuas"):
+			print("[PRUEBA] estatua %s global=%s visible=%s" % [estatua.name,
+					estatua.global_position, estatua.is_visible_in_tree()])
+			if absf(float(estatua.global_position.y) - 42.2) < 0.4:
+				en_pedestal += 1
+			if estatua.find_children("*", "MeshInstance3D", true, false).size() > 0:
+				con_malla += 1
+		_check(en_pedestal == total, "estatuas sobre los pedestales del atrio",
+				"en_pedestal=%d" % en_pedestal)
+		_check(con_malla == total, "estatuas con malla visible", "con_malla=%d" % con_malla)
+
+	var portal = interior.call("portal")
+	_check(portal != null, "portal del archipiélago")
+	if portal != null:
+		var z := float(portal.global_position.z)
+		_check(absf(z - 18.2) < 0.5, "portal en el eje del acceso sur", "z=%.2f" % z)
+
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var suelo_salon := _rayo_suelo(Vector3(10.0, 45.0, 0.0), 30.0)
+	_check(absf(suelo_salon - 41.7) < 0.25, "suelo del atrio a la altura del diseño",
+			"y=%.2f" % suelo_salon)
+	var suelo_dais := _rayo_suelo(Vector3(0.0, 46.0, 0.0), 30.0)
+	_check(absf(suelo_dais - 42.2) < 0.25, "estrado del despacho transitable",
+			"y=%.2f" % suelo_dais)
+	var suelo_terraza := _rayo_suelo(Vector3(0.0, 45.0, 27.0), 30.0)
+	_check(absf(suelo_terraza - 41.7) < 0.3, "terraza perimetral de la DAO",
+			"y=%.2f" % suelo_terraza)
+
+
+func _rayo_suelo(punto: Vector3, hasta_y: float) -> float:
+	var espacio := get_world_3d().direct_space_state
+	var consulta := PhysicsRayQueryParameters3D.create(punto, Vector3(punto.x, hasta_y, punto.z))
+	var golpe := espacio.intersect_ray(consulta)
+	return float(golpe["position"].y) if not golpe.is_empty() else NAN
+
 
 func _capturar_todo() -> void:
 	if _dao == null:
@@ -171,6 +229,11 @@ func _capturar_todo() -> void:
 	await _vista("05_mar_metaverso", Vector3(0, 50, -96), Vector3(0, 44, -190), 50.0)
 	await _vista("06_llegada_sur", Vector3(0, 49, 52), Vector3(0, 42, 0), 60.0)
 	await _vista("07_archipielago", Vector3(270, 70, 270), Vector3(0, 34, 0), 55.0)
+	await _vista("08_interior_acceso_sur", Vector3(0, 44.8, -19.0), Vector3(0, 43.6, 0), 74.0)
+	await _vista("09_despacho_lucia", Vector3(7.8, 44.6, 9.0), Vector3(0, 43.2, 0), 55.0)
+	await _vista("10_carrusel_avatares", Vector3(0, 45.0, 16.8), Vector3(0, 43.2, -2), 80.0)
+	await _vista("11_portal_archipielago", Vector3(0, 45.0, 8.6), Vector3(0, 45.6, 18.2), 58.0)
+	await _vista("12_cupula_oculo", Vector3(0, 42.8, 9.0), Vector3(0, 51.5, -1.5), 90.0)
 
 
 func _vista(nombre: String, desde: Vector3, hacia: Vector3, fov: float) -> void:
