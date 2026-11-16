@@ -24,6 +24,10 @@ Avatares="*res://avatares/GestorAvatares.gd"
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/constructor_isla/plugin.cfg")
+
 [input]
 
 ui_accept={
@@ -64,6 +68,3 @@ ui_down={
 [rendering]
 
 rendering_device/driver.windows="d3d12"
-
-[editor_plugins]
-enabled=PackedStringArray("res://addons/constructor_isla/plugin.cfg")

@@ -211,6 +211,54 @@ func _validar_interior() -> void:
 	_check(absf(suelo_terraza - 41.7) < 0.3, "terraza perimetral de la DAO",
 			"y=%.2f" % suelo_terraza)
 
+	# Las cuatro rampas y la del estrado declaran su collision shape en la escena
+	# y deben ser transitables con un rayo desde arriba.
+	for nombre_rampa in ["RampaSur", "RampaEste", "RampaNorte", "RampaOeste"]:
+		var rampa := interior.get_node_or_null(nombre_rampa) as Node3D
+		if rampa == null:
+			_check(false, "rampa %s en la escena" % nombre_rampa)
+			continue
+		var forma := _forma_de(rampa, "ColisionRampa")
+		_check(forma != null and forma.shape is BoxShape3D,
+				"colisión de la rampa %s en la escena" % nombre_rampa)
+		if forma == null:
+			continue
+		var centro := rampa.global_transform * Vector3(0.0, 40.75, 33.45)
+		var suelo := _rayo_suelo(centro + Vector3(0.0, 4.0, 0.0), 30.0)
+		_check(absf(suelo - (centro.y + 0.15)) < 0.35,
+				"rampa %s transitable" % nombre_rampa, "y=%.2f" % suelo)
+		var umbral := rampa.global_transform * Vector3(0.0, 41.70, 30.9)
+		var alto := _rayo_suelo(umbral + Vector3(0.0, 4.0, 0.0), 30.0)
+		_check(absf(alto - 41.70) < 0.12, "umbral de la rampa %s a ras del atrio"
+				% nombre_rampa, "y=%.2f" % alto)
+		var barandas := rampa.get_node_or_null("ColisionBarandas") as StaticBody3D
+		var izq: CollisionShape3D = barandas.get_node_or_null("BarandaIzq") if barandas != null else null
+		var der: CollisionShape3D = barandas.get_node_or_null("BarandaDer") if barandas != null else null
+		_check(izq != null and izq.shape is BoxShape3D and der != null and der.shape is BoxShape3D,
+				"barandas de la rampa %s con colisión" % nombre_rampa)
+		var rail := rampa.global_transform * Vector3(3.45, 41.05, 33.45)
+		var rail_y := _rayo_suelo(rail + Vector3(0.0, 4.0, 0.0), 30.0)
+		_check(absf(rail_y - (rail.y + 0.13)) < 0.35,
+				"baranda %s frena" % nombre_rampa, "y=%.2f" % rail_y)
+
+	var rampa_dais := interior.get_node_or_null("ColisionRampaDais") as StaticBody3D
+	var forma_dais: CollisionShape3D = null
+	if rampa_dais != null:
+		forma_dais = rampa_dais.get_node_or_null("CollisionShape3D") as CollisionShape3D
+	_check(forma_dais != null and forma_dais.shape is BoxShape3D,
+			"colisión de la rampa del estrado en la escena")
+	if forma_dais != null:
+		var alto_rampa := _rayo_suelo(Vector3(0.0, 46.0, 7.8), 30.0)
+		_check(absf(alto_rampa - 42.05) < 0.3, "rampa del estrado transitable",
+				"y=%.2f" % alto_rampa)
+
+
+func _forma_de(padre: Node, nombre: String) -> CollisionShape3D:
+	var cuerpo := padre.get_node_or_null(nombre) as StaticBody3D
+	if cuerpo == null:
+		return null
+	return cuerpo.get_node_or_null("CollisionShape3D") as CollisionShape3D
+
 
 func _rayo_suelo(punto: Vector3, hasta_y: float) -> float:
 	var espacio := get_world_3d().direct_space_state

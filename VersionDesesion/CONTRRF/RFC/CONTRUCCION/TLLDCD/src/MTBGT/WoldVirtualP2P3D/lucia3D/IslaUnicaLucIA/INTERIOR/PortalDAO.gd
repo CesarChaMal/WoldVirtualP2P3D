@@ -11,6 +11,10 @@ const SHADER_ENERGIA := preload("res://gdshader/portal_energy.gdshader")
 
 const GRUPO_PANEL := "teleport_panel"
 
+## Se emite cuando el avatar local cruza el portal. En el mundo abre el
+## explorador de islas; en el onboarding marca el momento de crear la isla.
+signal portal_cruzado
+
 var _estado: Label3D = null
 var _bloqueo_hasta := 0
 
@@ -162,6 +166,7 @@ func _on_body_entered(body: Node3D) -> void:
 	if Time.get_ticks_msec() < _bloqueo_hasta:
 		return
 	_bloqueo_hasta = Time.get_ticks_msec() + 3000
+	portal_cruzado.emit()
 	var panel := get_tree().get_first_node_in_group(GRUPO_PANEL)
 	if panel != null and panel.has_method("alternar"):
 		panel.call("alternar")

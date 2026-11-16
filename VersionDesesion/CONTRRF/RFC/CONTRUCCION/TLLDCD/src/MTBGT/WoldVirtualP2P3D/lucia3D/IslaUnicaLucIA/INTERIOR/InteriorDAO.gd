@@ -176,19 +176,40 @@ func _construir_terrazas() -> void:
 	var oro := _mat(COLOR_ORO, 0.3, 0.85, COLOR_ORO, 0.5)
 	var inclinacion := atan2(1.5, 5.0)
 	for i in 4:
-		var nodo := Node3D.new()
-		nodo.name = ["RampaSur", "RampaEste", "RampaNorte", "RampaOeste"][i]
-		nodo.rotation.y = [0.0, -PI * 0.5, PI, PI * 0.5][i]
-		add_child(nodo)
-		_caja("Superficie", Vector3(7.2, 0.3, 5.6), Vector3(0.0, 40.95, 33.45), metal,
+		# Las colisiones viven en la escena; el constructor sólo añade lo visual.
+		var nombre_rampa: String = ["RampaSur", "RampaEste", "RampaNorte", "RampaOeste"][i]
+		var nodo := get_node_or_null(nombre_rampa) as Node3D
+		if nodo == null:
+			nodo = Node3D.new()
+			nodo.name = nombre_rampa
+			nodo.rotation.y = [0.0, -PI * 0.5, PI, PI * 0.5][i]
+			add_child(nodo)
+		# El borde alto queda a ras del suelo del atrio: sin escalón, se sale
+		# caminando de la terraza por las cuatro rampas.
+		_caja("Superficie", Vector3(7.2, 0.3, 5.6), Vector3(0.0, 40.75, 33.45), metal,
 				Vector3(inclinacion, 0.0, 0.0), nodo)
-		var forma := BoxShape3D.new()
-		forma.size = Vector3(7.2, 0.3, 5.6)
-		_colision("ColisionRampa", forma, Vector3(0.0, 40.95, 33.45),
-				Vector3(inclinacion, 0.0, 0.0), nodo)
-		for lado in [-3.45, 3.45]:
-			_caja("Baranda", Vector3(0.18, 0.26, 5.6), Vector3(lado, 41.25, 33.45), oro,
+		if nodo.get_node_or_null("ColisionRampa") == null:
+			var forma := BoxShape3D.new()
+			forma.size = Vector3(7.2, 0.3, 5.6)
+			_colision("ColisionRampa", forma, Vector3(0.0, 40.75, 33.45),
 					Vector3(inclinacion, 0.0, 0.0), nodo)
+		for lado in [-3.45, 3.45]:
+			_caja("Baranda", Vector3(0.18, 0.26, 5.6), Vector3(lado, 41.05, 33.45), oro,
+					Vector3(inclinacion, 0.0, 0.0), nodo)
+		if nodo.get_node_or_null("ColisionBarandas") == null:
+			# La baranda visual también frena: ningún borde de rampa queda abierto.
+			var barandas := StaticBody3D.new()
+			barandas.name = "ColisionBarandas"
+			nodo.add_child(barandas)
+			for lado in [-3.45, 3.45]:
+				var forma_baranda := BoxShape3D.new()
+				forma_baranda.size = Vector3(0.18, 0.26, 5.6)
+				var baranda := CollisionShape3D.new()
+				baranda.name = "BarandaIzq" if lado < 0.0 else "BarandaDer"
+				baranda.shape = forma_baranda
+				baranda.position = Vector3(lado, 41.05, 33.45)
+				baranda.rotation.x = inclinacion
+				barandas.add_child(baranda)
 
 	# Petril de la terraza, con huecos en las cuatro rampas.
 	var petril := _mat(COLOR_ACERO_CLARO, 0.4, 0.5, Color(0.02, 0.1, 0.14), 0.6)
@@ -364,10 +385,11 @@ func _construir_oficina() -> void:
 	var rampa := _caja("RampaDais", Vector3(3.6, 0.16, 1.9), Vector3(0.0, SUELO_Y + 0.27, 7.8), oro,
 			Vector3(atan2(ALTURA_DAIS, 1.9), 0.0, 0.0))
 	rampa.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	var forma_rampa := BoxShape3D.new()
-	forma_rampa.size = Vector3(3.6, 0.16, 1.9)
-	_colision("ColisionRampaDais", forma_rampa, Vector3(0.0, SUELO_Y + 0.27, 7.8),
-			Vector3(atan2(ALTURA_DAIS, 1.9), 0.0, 0.0))
+	if get_node_or_null("ColisionRampaDais") == null:
+		var forma_rampa := BoxShape3D.new()
+		forma_rampa.size = Vector3(3.6, 0.16, 1.9)
+		_colision("ColisionRampaDais", forma_rampa, Vector3(0.0, SUELO_Y + 0.27, 7.8),
+				Vector3(atan2(ALTURA_DAIS, 1.9), 0.0, 0.0))
 
 	var alto := SUELO_Y + ALTURA_DAIS
 	# Escritorio curvo: mesa de recepción frente a LucIA.
@@ -512,6 +534,10 @@ func carrusel() -> Node:
 
 func portal() -> Node:
 	return get_node_or_null("PortalDAO")
+
+
+func zona_personalizacion() -> Node3D:
+	return get_node_or_null("ZonaPersonalizacion") as Node3D
 
 
 func aro_holo() -> Node3D:
