@@ -10,6 +10,11 @@ signal isla_registrada(exito: bool, mensaje: String)
 
 const SPAWN_HEIGHT := 45.0
 const POLL_INTERVAL := 1.0
+## Índice reservado para la Isla Única LucIA (sede de LucIA y DAO). Nunca
+## colisiona con las islas de jugador, que se numeran desde 0.
+const INDICE_DAO := -1
+## Devuelto por current_island_index cuando el avatar no está sobre una isla.
+const SIN_ISLA := -2
 
 var island_history: Dictionary = {} # index(int) -> Vector3 (centro isla)
 var owner_offline: Dictionary = {} # index(int) -> bool
@@ -40,7 +45,6 @@ func _scan_islands() -> void:
 		return
 	var changed := false
 	var chunk_size: float = float(_chunk_manager.get("chunk_size"))
-	var per_row: int = int(_chunk_manager.get("islands_per_row"))
 	# Solo cuentan las islas que ChunkManager tiene instanciadas (`island_nodes`,
 	# que el RPC de creación mantiene también en los clientes) y las reservas del
 	# anfitrión (`active_islands`). Antes se escaneaba cualquier hijo Node3D y se
@@ -53,7 +57,7 @@ func _scan_islands() -> void:
 		var i := int(idx)
 		if island_history.has(i):
 			continue
-		island_history[i] = _centro_isla(nodos[idx], i, chunk_size, per_row)
+		island_history[i] = _centro_isla(nodos[idx], i, chunk_size)
 		owner_offline[i] = false
 		changed = true
 	var active: Dictionary = {}
@@ -63,31 +67,45 @@ func _scan_islands() -> void:
 		var j := int(active[p_id])
 		if island_history.has(j):
 			continue
-		island_history[j] = _grid_pos(j, chunk_size, per_row)
+		island_history[j] = _grid_pos(j, chunk_size)
 		owner_offline[j] = false
 		changed = true
+	# La Isla Única LucIA no tiene dueño ni índice de jugador: se publica una
+	# sola vez en su sitio fijo (el origen) en cuanto ChunkManager la instancia.
+	if not island_history.has(INDICE_DAO):
+		var dao := get_tree().get_first_node_in_group("isla_unica_lucia") as Node3D
+		if dao != null and is_instance_valid(dao):
+			var p_dao := dao.global_position
+			island_history[INDICE_DAO] = Vector3(p_dao.x, 0, p_dao.z)
+			owner_offline[INDICE_DAO] = false
+			changed = true
 	if changed:
 		islands_updated.emit(get_islands())
 
 
 ## Centro plano de una isla instanciada (posición de su nodo) o su celda teórica
 ## si el nodo ya no es válido.
-func _centro_isla(nodos: Array, index: int, chunk_size: float, per_row: int) -> Vector3:
+func _centro_isla(nodos: Array, index: int, chunk_size: float) -> Vector3:
 	if nodos.size() > 0 and is_instance_valid(nodos[0]) and nodos[0] is Node3D:
 		var p: Vector3 = (nodos[0] as Node3D).position
 		return Vector3(p.x, 0, p.z)
-	return _grid_pos(index, chunk_size, per_row)
+	return _grid_pos(index, chunk_size)
 
-func _grid_pos(index: int, chunk_size: float, per_row: int) -> Vector3:
-	var row: int = int(index / float(per_row))
-	var col: int = index % per_row
-	var pos_x := 0.0
-	var pos_z := -row * chunk_size
-	if row % 2 == 0:
-		pos_x = -col * chunk_size
-	else:
-		pos_x = -(per_row - 1 - col) * chunk_size
-	return Vector3(pos_x, 0, pos_z)
+## Misma cruz cardinal que ChunkManager (la Isla Única LucIA ocupa el origen):
+## 0 al norte, 1 al este, 2 al oeste y 3 al sur; después, anillos hacia afuera.
+func _grid_pos(index: int, chunk_size: float) -> Vector3:
+	var anillo: int = int(index / 4.0)
+	var slot: int = index % 4
+	var dist := float(anillo + 1) * chunk_size
+	match slot:
+		0:
+			return Vector3(0.0, 0.0, -dist)
+		1:
+			return Vector3(dist, 0.0, 0.0)
+		2:
+			return Vector3(-dist, 0.0, 0.0)
+		_:
+			return Vector3(0.0, 0.0, dist)
 
 func get_islands() -> Array:
 	var out: Array = []
@@ -112,6 +130,7 @@ func get_islands() -> Array:
 			"uuid": _uuid_corto(int(idx)),
 			"propia": int(idx) == mi_isla,
 			"registrada": not dueno_uuid.is_empty(),
+			"dao": int(idx) == INDICE_DAO,
 		})
 	out.sort_custom(func(a, b): return a["index"] < b["index"])
 	return out
@@ -189,14 +208,15 @@ func get_max_index() -> int:
 		m = maxi(m, int(idx))
 	return m
 
-# Isla bajo la posicion dada (la mas cercana dentro de media celda), -1 si ninguna.
+# Isla bajo la posicion dada (la mas cercana dentro de media celda) —incluida la
+# DAO—; SIN_ISLA si el avatar no está sobre ninguna.
 func current_island_index(pos: Vector3) -> int:
 	if island_history.is_empty():
-		return -1
+		return SIN_ISLA
 	var chunk_size := 199.5
 	if _chunk_manager != null and _chunk_manager.get("chunk_size") != null:
 		chunk_size = float(_chunk_manager.get("chunk_size"))
-	var best := -1
+	var best := SIN_ISLA
 	var best_d := chunk_size * 0.5
 	for idx in island_history.keys():
 		var c: Vector3 = island_history[idx]

@@ -52,8 +52,7 @@
       "seccion": "STM_CH/STM_herramientas",
       "secciones": {
         "STM_herramientas": "STM_CH/STM_herramientas",
-        "PSNRL": "STM_CH/PSNRL",
-        "pycache": "STM_CH/pycache"
+        "PSNRL": "STM_CH/PSNRL"
       }
     },
     "STM_DOC": {
@@ -168,7 +167,8 @@
     "LC_constructor": "../../STM_RFC/STM_RFPRMN/LC_constructor.py"
   },
   "runtime": {
-    "lc_trabajando": "../../LCtrabajando",
+    "python": "../../.dev/.python/python.exe",
+    "lc_trabajando": "../../CONTRUCCION/LCtrabajando",
     "psnrl": "STM_CH/PSNRL",
     "pycache": "../../.dev/pycache",
     "ledger": "STM_CH/blockchain_ledger.json",

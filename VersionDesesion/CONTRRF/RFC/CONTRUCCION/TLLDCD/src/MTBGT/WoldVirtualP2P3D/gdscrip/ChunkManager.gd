@@ -16,9 +16,11 @@ const Identidad = preload("res://gdscrip/Identidad.gd")
 
 ## Registro exclusivo del anfitrión: UUID estable -> índice de isla.
 const REGISTRO_ISLAS := "user://islas_registro.cfg"
+## Isla Única LucIA (sede de LucIA y futura DAO): fija en el origen, fuera del
+## reparto por índice, por lo que nunca se duplica ni se retira.
+const RUTA_ISLA_DAO := "res://lucia3D/IslaUnicaLucIA/ESCENAS/IslaUnicaLucIA.tscn"
 
 @export var chunk_size: float = 199.5
-@export var islands_per_row: int = 10
 
 @onready var original_island = $ISLA3DCHUNK
 @onready var original_ocean = $Oceano3D
@@ -58,6 +60,7 @@ var _last_target_host := "127.0.0.1"
 var _last_target_port := PUERTO_WS
 var _is_explicit_client := false
 var _invitacion := ""   # credencial de sesión exigida por el proxy del anfitrión
+var _isla_dao: Node3D = null # Isla Única LucIA ya instanciada en esta máquina
 var _beacon_udp: PacketPeerUDP = null
 var _beacon_timer := 0.0
 
@@ -288,6 +291,7 @@ func _ready():
 	original_island.hide()
 	original_ocean.hide()
 	_desactivar_colision_plantilla()
+	_instanciar_isla_dao()
 	_mi_nick = _leer_nick()
 	_mi_uuid = Identidad.asegurar_identidad()
 	_mi_isla_guardada = Identidad.leer_mi_isla(_mi_uuid)
@@ -860,6 +864,8 @@ func _promover_a_servidor() -> void:
 			covered[int(idx)] = true
 		for entry in tm2.get_islands():
 			var hidx := int(entry["index"])
+			if hidx < 0:
+				continue # la isla DAO no es una plaza de jugador
 			if not covered.has(hidx):
 				active_islands[-1000 - hidx] = hidx
 				covered[hidx] = true
@@ -875,25 +881,28 @@ func _promover_a_servidor() -> void:
 	_migrando = false
 
 # Recupera el indice de mi propia isla desde el historial (la isla bajo mis pies
-# o la mas cercana a mi avatar); -1 si aun no hay historial.
+# o la mas cercana a mi avatar). La Isla Única LucIA no cuenta: no es de nadie.
 func _my_island_index(tm) -> int:
 	if tm == null or not tm.has_method("get_islands"):
 		return 0
 	var islands: Array = tm.get_islands()
-	if islands.is_empty():
-		return 0
-	var best := int(islands[0]["index"])
+	var best := -1
 	var best_d := 1e20
 	for entry in islands:
+		var idx := int(entry["index"])
+		if idx < 0:
+			continue
 		var pos: Vector3 = entry["position"]
 		var d := Vector2(pos.x - userbase.position.x, pos.z - userbase.position.z).length()
 		if d < best_d:
 			best_d = d
-			best = int(entry["index"])
-	return best
+			best = idx
+	return best if best >= 0 else 0
 
 @rpc("authority", "call_local", "reliable")
 func _spawn_island_for_player(id: int, index: int, nick: String = "", uuid: String = ""):
+	if index < 0:
+		return # índices negativos son la DAO, nunca una isla de jugador
 	var nueva := not spawned_indices.has(index)
 	var new_island = null
 	if nueva:
@@ -978,16 +987,52 @@ func _reactivar_colision_isla(nodo_isla: Node) -> void:
 			cuerpo.collision_mask = int(c["mascara"])
 
 
+## Reparto en cruz cardinal alrededor de la Isla Única LucIA (origen):
+## índice 0 al norte (enfrente), 1 al este (derecha), 2 al oeste (izquierda) y
+## 3 al sur (detrás). A partir del cuarto el patrón se repite en anillos cada
+## vez más alejados, de modo que el origen queda siempre libre para la DAO.
 func _centro_isla(index: int) -> Vector2:
-	var row := int(float(index) / float(islands_per_row))
-	var col := index % islands_per_row
-	var pos_x := 0.0
-	var pos_z := -row * chunk_size
-	if row % 2 == 0:
-		pos_x = -col * chunk_size
-	else:
-		pos_x = -(islands_per_row - 1 - col) * chunk_size
-	return Vector2(pos_x, pos_z)
+	var anillo := int(float(index) / 4.0)
+	var slot := index % 4
+	var dist := float(anillo + 1) * chunk_size
+	match slot:
+		0:
+			return Vector2(0.0, -dist)
+		1:
+			return Vector2(dist, 0.0)
+		2:
+			return Vector2(-dist, 0.0)
+		_:
+			return Vector2(0.0, dist)
+
+
+## Instancia una sola vez la Isla Única LucIA en el origen. No usa índices ni
+## RPC de islas de jugador: el script de la isla la protege con un grupo, así
+## que aunque algo intentara cargarla de nuevo la copia se descarta sola.
+func _instanciar_isla_dao() -> void:
+	if _isla_dao != null and is_instance_valid(_isla_dao):
+		return
+	if not get_tree().get_nodes_in_group("isla_unica_lucia").is_empty():
+		return
+	if not ResourceLoader.exists(RUTA_ISLA_DAO):
+		push_warning("[DAO] Falta la escena de la Isla Única LucIA: " + RUTA_ISLA_DAO)
+		return
+	var escena: Resource = load(RUTA_ISLA_DAO)
+	if not (escena is PackedScene):
+		push_warning("[DAO] La escena de la Isla Única LucIA no es válida: " + RUTA_ISLA_DAO)
+		return
+	var nodo := (escena as PackedScene).instantiate() as Node3D
+	if nodo == null:
+		return
+	nodo.position = Vector3.ZERO
+	add_child(nodo)
+	_isla_dao = nodo
+	# La plantilla de océano está oculta; la DAO necesita su propio mar local.
+	var ocean_dao = original_ocean.duplicate()
+	ocean_dao.show()
+	add_child(ocean_dao)
+	ocean_dao.position = Vector3.ZERO
+	print("[DAO] Isla Única LucIA instanciada en el origen (0,0,0)")
 
 
 ## Fija la isla propia, la persiste y coloca el avatar solo la primera vez.
