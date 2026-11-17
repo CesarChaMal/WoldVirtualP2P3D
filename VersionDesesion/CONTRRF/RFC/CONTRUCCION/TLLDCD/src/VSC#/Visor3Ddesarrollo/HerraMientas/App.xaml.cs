@@ -11,6 +11,12 @@ namespace Visor3D
         public static WebNodoService WebNodo { get; } = new WebNodoService();
         private void OnStartup(object sender, StartupEventArgs e)
         {
+            if (Array.Exists(e.Args, a => a.Equals("--seguridad-selftest", StringComparison.OrdinalIgnoreCase)))
+            {
+                Environment.Exit(SeguridadSelfTest.Run());
+                return;
+            }
+
             if (Array.Exists(e.Args, a => a.Equals("--lucia-selftest", StringComparison.OrdinalIgnoreCase)))
             {
                 Environment.Exit(StartupSelfTest.RunLucia());

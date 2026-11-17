@@ -404,13 +404,20 @@ func _iniciar_como_servidor(reutilizar: bool = false):
 	# por lo que los clientes remotos SÍ pueden alcanzarlo. Si se usase ENet (UDP)
 	# como peer principal, los clientes del túnel nunca completarían el handshake.
 	print("[ChunkManager/WS] Creando Servidor WebSocket en puerto ", PUERTO_WS, "...")
+	var modo_local := false
 	if not reutilizar:
 		ws_peer = WebSocketMultiplayerPeer.new()
 		var err := ws_peer.create_server(_last_target_port)
 		if err != OK:
-			printerr("[ChunkManager/WS] ERROR al crear servidor WebSocket: ", err)
-			return
-		multiplayer.multiplayer_peer = ws_peer
+			if Red.sesion_validada() or _is_explicit_client:
+				printerr("[ChunkManager/WS] ERROR al crear servidor WebSocket: ", err)
+				return
+			printerr("[ChunkManager/WS] ERROR al crear servidor WebSocket en ", _last_target_port, ": ", err,
+					". Se arranca en modo local sin red.")
+			multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
+			modo_local = true
+		else:
+			multiplayer.multiplayer_peer = ws_peer
 	else:
 		# Peers que conectaron en el alta siguen siendo sondas hasta su claim real.
 		for id in multiplayer.get_peers():
@@ -426,11 +433,14 @@ func _iniciar_como_servidor(reutilizar: bool = false):
 	for ip in mis_ips:
 		if ip != "127.0.0.1":
 			ips_txt += ip + " "
-	print("[ChunkManager/WS] ✔ Servidor WebSocket activo en 0.0.0.0:", PUERTO_WS, ". ID del servidor: ", multiplayer.get_unique_id())
-	print("[ChunkManager/WS]   IPs locales para compartir (anfitrión): ", ips_txt.strip_edges() if not ips_txt.is_empty() else "(ninguna no-loopback detectada)")
+	if modo_local:
+		print("[ChunkManager/WS] ✔ Mundo en MODO LOCAL sin red. ID de sesión: ", multiplayer.get_unique_id())
+	else:
+		print("[ChunkManager/WS] ✔ Servidor WebSocket activo en 0.0.0.0:", PUERTO_WS, ". ID del servidor: ", multiplayer.get_unique_id())
+		print("[ChunkManager/WS]   IPs locales para compartir (anfitrión): ", ips_txt.strip_edges() if not ips_txt.is_empty() else "(ninguna no-loopback detectada)")
 
-	# Activar beacon LAN de auto-descubrimiento para que otros equipos en la misma red puedan unirse sin enlace
-	_iniciar_lan_beacon()
+		# Activar beacon LAN de auto-descubrimiento para que otros equipos en la misma red puedan unirse sin enlace
+		_iniciar_lan_beacon()
 
 	# El anfitrión conserva su isla entre reinicios y registra su propia identidad.
 	_cargar_registro_islas()
@@ -443,7 +453,9 @@ func _iniciar_como_servidor(reutilizar: bool = false):
 	_roster = {_mi_id: {"order": 0, "url": _mi_url, "ip": _mi_ip, "nick": _mi_nick}}
 	_next_order = 1
 	_broadcast_roster()
-	_escribir_host_sesion(_mi_url if not _mi_url.is_empty() else _mi_ip)
+	# En modo local no hay anfitrión que anunciar en p2p_session.json.
+	if not modo_local:
+		_escribir_host_sesion(_mi_url if not _mi_url.is_empty() else _mi_ip)
 
 func _on_connected_fail():
 	_fallo_migracion = true

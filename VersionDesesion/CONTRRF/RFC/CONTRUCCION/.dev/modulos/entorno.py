@@ -15,6 +15,7 @@ from .rutas import (
     DEV_DIR,
     DEV_PYTEST_INI,
     PRY_DIR,
+    PYCACHE_DIR,
     PYTEST_CACHE_DIR,
     PYTHON_DIR,
     PYTHON_EXE,
@@ -77,6 +78,7 @@ def configurar_variables_entorno() -> Dict[str, str]:
     DEV_DIR.mkdir(parents=True, exist_ok=True)
     PYTEST_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     RUFF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    PYCACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     py_activo = obtener_python_activo()
 
@@ -87,6 +89,8 @@ def configurar_variables_entorno() -> Dict[str, str]:
         "DOTNET_CLI_TELEMETRY_OPTOUT": "1",  # Evita errores de registro/seguridad en Windows
         "PYTEST_CACHE_DIR": str(PYTEST_CACHE_DIR),
         "RUFF_CACHE_DIR": str(RUFF_CACHE_DIR),
+        # Todo bytecode compilado del ecosistema se escribe en .dev/pycache
+        "PYTHONPYCACHEPREFIX": str(PYCACHE_DIR),
         "RFPRMN_RFC_DIR": str(RFC_DIR),
         "RFPRMN_PRY_DIR": str(PRY_DIR),
         "WVP_DEV_DIR": str(DEV_DIR),
@@ -193,6 +197,7 @@ def actualizar_vscode_config() -> Path:
             "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
             "PYTEST_CACHE_DIR": "${workspaceFolder}/.pytest_cache",
             "RUFF_CACHE_DIR": "${workspaceFolder}/.ruff_cache",
+            "PYTHONPYCACHEPREFIX": "${workspaceFolder}/pycache",
             "RFPRMN_RFC_DIR": "${workspaceFolder}/..",
             "RFPRMN_PRY_DIR": "${workspaceFolder}/../../../../SistemaPrincipal/PRY"
         }

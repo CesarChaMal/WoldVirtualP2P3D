@@ -31,7 +31,6 @@ if (-not $src) {
     $src = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\..\.."))
 }
 
-# El Python privado del taller permanece fuera del .exe; nunca usa el Python del sistema.
 $devDir = if ($src) {
     # Cada ruta va en su propia linea: con PowerShell 5.1 una coma final
     # convierte el siguiente Join-Path en parte de ChildPath y rompe el script.
@@ -57,6 +56,7 @@ if (-not (Test-Path $py) -and $src) { $py = Join-Path $src "LC_STM\python\python
 
 if ($Python) { $py = $Python }
 $srv = if ($Servidor) { $Servidor } elseif ($src) { Join-Path $src "MTBGT\WoldVirtualP2P3D\lucia3D\GLTF_lucIA\celebro_3D\puente_3D\servidor_lucia.py" } else { "" }
+if ($devDir) { $env:PYTHONPYCACHEPREFIX = Join-Path $devDir "pycache" }
 $logDir = Join-Path $env:LOCALAPPDATA "WoldVirtualP2P3D\logs"
 New-Item -ItemType Directory -Force -Path $logDir -ErrorAction SilentlyContinue | Out-Null
 $log = Join-Path $logDir "lucia_ps.log"
