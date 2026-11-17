@@ -21,15 +21,17 @@
 
     <NoWarn>$(NoWarn);NU1701</NoWarn>
 
-    <AssemblyName>LCDMWoldVirtualP2P3Dv2.8.4</AssemblyName>
+    <AssemblyName>DAOLCDMWoldVirtualP2P3Dv2.9.2</AssemblyName>
+    <Product>DAOLCDMWoldVirtualP2P3Dv2.9.2</Product>
     <RootNamespace>Visor3D</RootNamespace>
 
-    <Version>2.8.4</Version>
-    <AssemblyVersion>2.8.4.0</AssemblyVersion>
-    <FileVersion>2.8.4.0</FileVersion>
+    <Version>2.9.2</Version>
+    <AssemblyVersion>2.9.2.0</AssemblyVersion>
+    <FileVersion>2.9.2.0</FileVersion>
 
-    <Title>Wold Virtual p2p 3D</Title>
-    <Description>Visor 3D — LCDMWoldVirtualP2P3D v2.8.4 (Metaverso oficial con Lucía 3D como anfitriona, registro inmutable por bloques y servidor blockchain oficial integrado)</Description>
+    <Title>DAOLCDMWoldVirtualP2P3Dv2.9.2</Title>
+    <Description>Visor 3D — DAOLCDMWoldVirtualP2P3Dv2.9.2 (DAO 3D con runtime de LucIA integrado; conversación mediante Ollama y modelo local)</Description>
+    <LuciaRuntimePath Condition="'$(LuciaRuntimePath)' == ''">$(MSBuildThisFileDirectory)..\..\..\..\..\.dev\rebuild287\lucia_runtime.zip</LuciaRuntimePath>
     <DefineConstants Condition="'$(GodotSourcePreview)' == 'true'">$(DefineConstants);GODOT_SOURCE_PREVIEW</DefineConstants>
   </PropertyGroup>
 
@@ -173,6 +175,15 @@
     <EmbeddedResource Include="$(MundoPckPath)"
                       Condition="'$(MundoPckPath)' != '' and Exists('$(MundoPckPath)')"
                       LogicalName="Visor3D.wvp3d.pck" />
+    <EmbeddedResource Include="$(LuciaRuntimePath)"
+                      Condition="'$(SkipGodotAssets)' != 'true' and Exists('$(LuciaRuntimePath)')"
+                      LogicalName="Visor3D.lucia_runtime.zip" />
   </ItemGroup>
+
+  <Target Name="ValidateLuciaRuntime" BeforeTargets="PrepareForBuild"
+          Condition="'$(SkipGodotAssets)' != 'true'">
+    <Error Condition="!Exists('$(LuciaRuntimePath)')"
+           Text="La distribución v2.9.2 requiere el runtime autónomo de LucIA: $(LuciaRuntimePath). Genera lucia_runtime.zip o indica LuciaRuntimePath. Solo los tests pueden omitirlo con SkipGodotAssets=true." />
+  </Target>
 
 </Project>

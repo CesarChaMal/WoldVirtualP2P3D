@@ -36,7 +36,7 @@ var _capas_plantilla: Array = []
 ## y también funciona en LAN. ENet (UDP 8910) queda descartado porque ningún
 ## túnel HTTP transporta UDP, por lo que los clientes remotos nunca conectarían.
 const PUERTO_WS := 8911
-var ws_peer = WebSocketMultiplayerPeer.new()
+var ws_peer: WebSocketMultiplayerPeer = WebSocketMultiplayerPeer.new()
 var next_island_index = 0
 var active_islands = {} # Diccionario: player_id -> island_index
 var owner_names = {} # Diccionario: player_id -> nick del dueño
@@ -224,10 +224,19 @@ func _limpiar_turnos_obsoletos() -> void:
 			_reciclados.erase(pid)
 
 
+## No inicializar la caché RPC del mundo mientras el peer siga en la sonda.
+func _difundir_mundo(method: String, args: Array, local: bool = false) -> void:
+	for id in multiplayer.get_peers():
+		if not _sondas.has(id):
+			rpc_id.callv([id, method] + args)
+	if local:
+		callv(method, args)
+
+
 func _broadcast_turnos() -> void:
 	if not multiplayer.is_server() or multiplayer.get_peers().is_empty():
 		return
-	rpc("_sync_turnos", {"plazas": _turnos, "reciclados": _reciclados})
+	_difundir_mundo("_sync_turnos", [{"plazas": _turnos, "reciclados": _reciclados}])
 
 
 func mi_turno() -> int:
@@ -251,6 +260,8 @@ func turnos_snapshot() -> Dictionary:
 ## ni quedar en el roster. Lo llama la Sonda del anfitrion.
 func marcar_sonda(id: int) -> void:
 	if not multiplayer.is_server():
+		return
+	if active_islands.has(id) or pending_claims.has(id):
 		return
 	_sondas[id] = true
 	pending_claims.erase(id)
@@ -329,10 +340,17 @@ func _ready():
 	print("[ChunkManager/WS]   Host Objetivo: ", target_host)
 	print("[ChunkManager/WS]   Puerto WebSocket (TCP): ", PUERTO_WS)
 
-	# Validación: si el rol es cliente explícito, el host no debe ser loopback.
-	if _is_explicit_client and (target_host == "127.0.0.1" or target_host == "localhost" or target_host.is_empty()):
-		printerr("[ChunkManager/WS] ❌ INCONSISTENCIA: Rol cliente forzado pero host objetivo es loopback o vacío ('", target_host, "'). No se iniciará como cliente remoto.")
-		_is_explicit_client = false
+	if Red.sesion_validada():
+		var existente = multiplayer.multiplayer_peer
+		if not existente is WebSocketMultiplayerPeer or existente.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+			printerr("[ChunkManager/WS] Sesión validada desconectada; no hay fallback local.")
+			return
+		ws_peer = existente
+		if multiplayer.is_server():
+			_iniciar_como_servidor(true)
+		else:
+			_on_connected_ok()
+		return
 
 	print("[ChunkManager/WS]   Rol EFECTIVO: ", "CLIENTE_REMOTO -> " + target_host if _is_explicit_client else ("SERVIDOR_LOCAL (WS 0.0.0.0:" + str(PUERTO_WS) + ")" if force_host else "AUTO (intentará unirse a un anfitrión local, fallback a servidor)"))
 	print("================================================================")
@@ -380,18 +398,23 @@ func _on_connected_ok():
 	else:
 		rpc_id(1, "_declarar_avatar", ruta_avatar)
 
-func _iniciar_como_servidor():
+func _iniciar_como_servidor(reutilizar: bool = false):
 	# El anfitrión sirve el mundo por WebSocket (TCP 8911). Este es el puerto que el
 	# Visor C# reenvía a través del túnel efímero (cloudflared/serveo/localhost.run),
 	# por lo que los clientes remotos SÍ pueden alcanzarlo. Si se usase ENet (UDP)
 	# como peer principal, los clientes del túnel nunca completarían el handshake.
 	print("[ChunkManager/WS] Creando Servidor WebSocket en puerto ", PUERTO_WS, "...")
-	ws_peer = WebSocketMultiplayerPeer.new()
-	var err := ws_peer.create_server(PUERTO_WS)
-	if err != OK:
-		printerr("[ChunkManager/WS] ERROR al crear servidor WebSocket en ", PUERTO_WS, ": ", err)
-		return
-	multiplayer.multiplayer_peer = ws_peer
+	if not reutilizar:
+		ws_peer = WebSocketMultiplayerPeer.new()
+		var err := ws_peer.create_server(_last_target_port)
+		if err != OK:
+			printerr("[ChunkManager/WS] ERROR al crear servidor WebSocket: ", err)
+			return
+		multiplayer.multiplayer_peer = ws_peer
+	else:
+		# Peers que conectaron en el alta siguen siendo sondas hasta su claim real.
+		for id in multiplayer.get_peers():
+			_sondas[int(id)] = true
 
 	# Reservar mi propio avatar antes de registrar mi isla: mi_isla_lista se
 	# emite de inmediato y no debe entrar con una plaza sin asignar.
@@ -433,18 +456,10 @@ func _on_connected_fail():
 
 func _on_peer_connected(id):
 	if multiplayer.is_server():
-		# Enviar a este nuevo jugador las islas que ya existen (con su dueño)
-		for p_id in active_islands:
-			var idx := int(active_islands[p_id])
-			rpc_id(id, "_spawn_island_for_player", p_id, idx,
-					str(owner_names.get(p_id, "")), str(_uuid_por_isla.get(idx, "")))
 		# NO registrar de inmediato: esperar la reclamacion del cliente. Si es
 		# una reconexion (ya tenia isla), se adopta sin crear nada nuevo.
-		_adopt_or_register.bind(id).call_deferred()
-		# Roster: orden de llegada + dirección para poder reconectar tras migración.
-		_roster[id] = {"order": _next_order, "url": "", "ip": "", "nick": ""}
-		_next_order += 1
-		_broadcast_roster()
+		_sondas[id] = true
+		# El roster se incorpora únicamente al recibir el claim del mundo real.
 
 # El cliente anuncia el indice de su isla y su nick al conectarse
 # (-1 = jugador nuevo).
@@ -453,6 +468,18 @@ func _claim_island(idx: int, nick: String, uuid: String = "") -> void:
 	if not multiplayer.is_server():
 		return
 	var sender := multiplayer.get_remote_sender_id()
+	if sender <= 0 or active_islands.has(sender) or pending_claims.has(sender):
+		return
+	_sondas.erase(sender)
+	for p_id in active_islands:
+		var existente_idx := int(active_islands[p_id])
+		rpc_id(sender, "_spawn_island_for_player", p_id, existente_idx,
+			str(owner_names.get(p_id, "")), str(_uuid_por_isla.get(existente_idx, "")))
+	if not _roster.has(sender):
+		_roster[sender] = {"order": _next_order, "url": "", "ip": "", "nick": nick}
+		_next_order += 1
+	_broadcast_roster()
+	_adopt_or_register.bind(sender).call_deferred()
 	pending_claims[sender] = idx
 	pending_uuids[sender] = uuid if Identidad.uuid_valido(uuid) else ""
 	# Nombre único: si otro jugador ya usa ese nick, se sufija (#2, #3...).
@@ -478,7 +505,7 @@ func _sync_roster(data: Dictionary) -> void:
 
 func _broadcast_roster() -> void:
 	if multiplayer.is_server():
-		rpc("_sync_roster", _roster)
+		_difundir_mundo("_sync_roster", [_roster])
 
 # Tras el margen de reclamacion: adoptar isla existente o crear una nueva.
 func _adopt_or_register(id: int) -> void:
@@ -489,8 +516,9 @@ func _adopt_or_register(id: int) -> void:
 		pending_claims.erase(id)
 		pending_uuids.erase(id)
 		return # se fue durante el margen
+	if active_islands.has(id) or not pending_claims.has(id):
+		return
 	if _sondas.has(id):
-		_sondas.erase(id)
 		pending_claims.erase(id)
 		pending_uuids.erase(id)
 		return # solo consulto plazas, no entra al mundo
@@ -554,7 +582,7 @@ func _adoptar_isla(id: int, index: int, uuid: String) -> void:
 	_vincular_propietario(index, id, nick, uuid)
 	# call_local: también actualiza la copia del anfitrión. Si la isla ya estaba
 	# instanciada, el receptor solo refresca dueño y reactiva al jugador propio.
-	rpc("_spawn_island_for_player", id, index, nick, uuid)
+	_difundir_mundo("_spawn_island_for_player", [id, index, nick, uuid], true)
 	print("Reconexion reconocida: jugador ", id, " conserva isla ", index)
 
 
@@ -574,7 +602,7 @@ func _register_player(id: int, uuid: String = "", preferido: int = -1):
 	next_island_index = maxi(next_island_index, index + 1)
 	var nick := str(owner_names.get(id, ""))
 	_vincular_propietario(index, id, nick, uuid)
-	rpc("_spawn_island_for_player", id, index, nick, uuid)
+	_difundir_mundo("_spawn_island_for_player", [id, index, nick, uuid], true)
 
 
 func _indice_activo(index: int) -> bool:
@@ -669,7 +697,7 @@ func _procesar_registro_isla(sender: int, index: int, uuid: String) -> String:
 	var nick := str(owner_names.get(sender, _mi_nick))
 	_vincular_propietario(index, sender, nick, uuid)
 	if is_inside_tree():
-		rpc("_sync_island_owner", index, sender, nick, uuid)
+		_difundir_mundo("_sync_island_owner", [index, sender, nick, uuid])
 	return ""
 
 
@@ -710,7 +738,7 @@ func _on_peer_disconnected(id):
 		active_islands.erase(id)
 		if isla_saliente >= 0 and not _indice_activo(isla_saliente):
 			_drop_fake_key(isla_saliente)
-			rpc("_despawn_island", isla_saliente)
+			_difundir_mundo("_despawn_island", [isla_saliente], true)
 		# La plaza del jugador que se va queda libre para el siguiente.
 		_sondas.erase(id)
 		var liberadas := Turnos.liberar(_turnos, id)

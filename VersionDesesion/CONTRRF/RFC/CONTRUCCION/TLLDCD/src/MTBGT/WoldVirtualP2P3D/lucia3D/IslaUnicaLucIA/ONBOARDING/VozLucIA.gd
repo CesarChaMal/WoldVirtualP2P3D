@@ -16,6 +16,9 @@ var _cola: Array[String] = []
 var _sintetizando := false
 var _pid := -1
 var _destino := ""
+var _texto_pendiente := ""
+var _limite_voz := 0
+var _guion := ""
 
 
 func _ready() -> void:
@@ -24,16 +27,20 @@ func _ready() -> void:
 	add_child(_reproductor)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(DIR_CACHE))
 	_python = _buscar_python()
+	_guion = _buscar_guion()
 
 
 ## Devuelve true si ya estaba disponible el audio oficial y se está oyendo.
 func decir(texto: String) -> bool:
 	if _reproductor == null:
 		return false
-	_reproductor.stop()
+	callar()
 	var ruta := _ruta_wav(texto)
 	if ruta.is_empty():
-		_pedir_sintesis(texto)
+		if not _python.is_empty() and not _guion.is_empty():
+			_texto_pendiente = texto
+			_limite_voz = Time.get_ticks_msec() + 30_000
+			_pedir_sintesis(texto)
 		return false
 	print("[VozLucIA] voz oficial: ", ruta.get_file())
 	var audio := _cargar(ruta)
@@ -47,13 +54,14 @@ func decir(texto: String) -> bool:
 func _process(_delta: float) -> void:
 	if not _sintetizando:
 		return
-	if FileAccess.file_exists(_destino):
-		_sintetizando = false
-		_siguiente()
-		return
 	if _pid > 0 and not OS.is_process_running(_pid):
-		# Falló o no hay red: se descarta la frase y sigue la cola.
 		_sintetizando = false
+		if not _texto_pendiente.is_empty():
+			var ruta := _ruta_wav(_texto_pendiente)
+			if not ruta.is_empty() and Time.get_ticks_msec() < _limite_voz:
+				decir(_texto_pendiente)
+			elif _cola.is_empty():
+				_texto_pendiente = ""
 		_siguiente()
 
 
@@ -76,10 +84,13 @@ func _cargar(ruta: String) -> AudioStream:
 
 ## True mientras el WAV oficial sigue reproduciéndose.
 func esta_hablando() -> bool:
-	return _reproductor != null and _reproductor.playing
+	return (_reproductor != null and _reproductor.playing) \
+			or (not _texto_pendiente.is_empty() and Time.get_ticks_msec() < _limite_voz)
 
 
 func callar() -> void:
+	_texto_pendiente = ""
+	_cola.clear()
 	if _reproductor != null:
 		_reproductor.stop()
 
@@ -100,21 +111,45 @@ func _siguiente() -> void:
 		return
 	_destino = ProjectSettings.globalize_path(
 			DIR_CACHE + "/" + texto.sha256_text() + ".wav")
-	var guion := ProjectSettings.globalize_path(RUTA_SCRIPT)
-	if not FileAccess.file_exists(guion):
+	if _guion.is_empty():
 		return
-	_pid = OS.create_process(_python, [guion, "--texto", texto, "--salida", _destino])
+	_pid = OS.create_process(_python, [_guion, "--texto", texto, "--salida", _destino])
 	if _pid <= 0:
 		return
 	_sintetizando = true
+
+
+func _buscar_guion() -> String:
+	var local := ProjectSettings.globalize_path(RUTA_SCRIPT)
+	if FileAccess.file_exists(local):
+		return local
+	var cursor := OS.get_executable_path().get_base_dir()
+	while not cursor.is_empty():
+		var candidato := cursor.path_join("TLLDCD/src/MTBGT/WoldVirtualP2P3D/" + RUTA_SCRIPT.trim_prefix("res://"))
+		if FileAccess.file_exists(candidato):
+			return candidato
+		var padre := cursor.get_base_dir()
+		if padre == cursor:
+			break
+		cursor = padre
+	return ""
 
 
 func _buscar_python() -> String:
 	var entorno := OS.get_environment("WVP_PYTHON")
 	if not entorno.is_empty() and FileAccess.file_exists(entorno):
 		return entorno
-	if not FileAccess.file_exists(ProjectSettings.globalize_path(RUTA_SCRIPT)):
-		return ""
+	for inicio in [OS.get_executable_path().get_base_dir(), ProjectSettings.globalize_path("res://")]:
+		var cursor: String = inicio
+		while not cursor.is_empty():
+			for relativa in [".dev/.python/python.exe", ".dev/venv/Scripts/python.exe"]:
+				var candidato := cursor.path_join(relativa)
+				if FileAccess.file_exists(candidato):
+					return candidato
+			var padre := cursor.get_base_dir()
+			if padre == cursor:
+				break
+			cursor = padre
 	var raiz := ProjectSettings.globalize_path("res://")
 	for relativa in [
 		"../../../../.dev/.python/python.exe",

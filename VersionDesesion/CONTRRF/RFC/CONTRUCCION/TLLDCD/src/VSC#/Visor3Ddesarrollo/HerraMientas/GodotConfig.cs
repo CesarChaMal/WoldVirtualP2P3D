@@ -133,9 +133,12 @@ namespace Visor3D
             return lista.ToArray();
         }
 
-        /// <summary>Python en el nuevo sistema de desarrollo (.dev) o embebido en el activo/archivo.</summary>
+        /// <summary>Python autónomo de LucIA o, en desarrollo, el del entorno/repositorio.</summary>
         public static string? GetPythonExePath()
         {
+            if (AppExtractor.EmbebeLucia)
+                return File.Exists(AppExtractor.LuciaPythonPath) ? AppExtractor.LuciaPythonPath : null;
+
             string? envPython = Environment.GetEnvironmentVariable("WVP_PYTHON");
             if (!string.IsNullOrWhiteSpace(envPython) && File.Exists(envPython)) return envPython;
 
@@ -169,6 +172,12 @@ namespace Visor3D
 
         public static string? GetPythonwExePath()
         {
+            if (AppExtractor.EmbebeLucia)
+            {
+                string pythonw = Path.Combine(AppExtractor.LuciaDir, "python", "pythonw.exe");
+                return File.Exists(pythonw) ? pythonw : null;
+            }
+
             string? repo = RepoRoot();
             if (repo != null)
             {

@@ -36,6 +36,12 @@ func _ready() -> void:
 	_construir_oficina()
 	_construir_iluminacion()
 	_cargar_lucia()
+	var perfil := ConfigFile.new()
+	if perfil.load("user://registro.cfg") == OK and FileAccess.file_exists("user://cuenta.json"):
+		var cuenta = JSON.parse_string(FileAccess.get_file_as_string("user://cuenta.json"))
+		if cuenta is Dictionary and not str(cuenta.get("cuenta_hash", "")).is_empty() \
+				and not str(perfil.get_value("jugador", "avatar_scene", "")).is_empty():
+			configurar_asamblea()
 
 
 func _process(delta: float) -> void:
@@ -540,6 +546,113 @@ func _construir_iluminacion() -> void:
 # ---------------------------------------------------------------------------
 # API para pruebas y para el resto del mundo
 # ---------------------------------------------------------------------------
+
+func configurar_asamblea() -> void:
+	# Reaplicar la desactivación incluso cuando el mobiliario ya existe.
+	var nodo_carrusel := carrusel()
+	if nodo_carrusel != null:
+		if nodo_carrusel.has_method("set_auto_abrir"):
+			nodo_carrusel.call("set_auto_abrir", false)
+		_desactivar_zona_asamblea(nodo_carrusel)
+	var zona := zona_personalizacion()
+	if zona != null:
+		_desactivar_zona_asamblea(zona)
+	var rotulo := get_node_or_null("RotuloVitrina_3") as Label3D
+	if rotulo != null:
+		rotulo.text = "ASAMBLEAS"
+	if get_node_or_null("AsambleaDAO") != null:
+		return
+
+	var asamblea := Node3D.new()
+	asamblea.name = "AsambleaDAO"
+	asamblea.position.y = SUELO_Y
+	add_child(asamblea)
+	var madera := _mat(COLOR_MADERA, 0.55)
+	var metal := _mat(COLOR_ACERO_CLARO, 0.35, 0.55)
+	var oro := _mat(COLOR_ORO, 0.28, 0.85)
+	var tapizado := _mat(Color(0.035, 0.16, 0.22), 0.9)
+
+	# Mesas sobre el aro de radio 14. El sector sur queda abierto: incluso
+	# los extremos de los asientos permanecen por debajo de z=10.
+	# Los sillones interiores quedan fuera del despacho y de su rampa.
+	for i in 9:
+		var ang := deg_to_rad(60.0 + 30.0 * i)
+		var radial := Vector3(sin(ang), 0.0, cos(ang))
+		var mesa := Node3D.new()
+		mesa.name = "MesaAsamblea_%02d" % i
+		mesa.position = radial * 14.0
+		mesa.rotation.y = ang
+		asamblea.add_child(mesa)
+		_pieza_asamblea("Tablero", Vector3(2.8, 0.14, 1.2), Vector3(0.0, 0.97, 0.0), madera, mesa)
+		_pieza_asamblea("Filo", Vector3(2.86, 0.04, 1.26), Vector3(0.0, 1.06, 0.0), oro, mesa)
+		for lado in [-0.95, 0.95]:
+			_cilindro("Pata_%s" % lado, 0.09, 0.09, 0.9, Vector3(lado, 0.45, 0.0), metal, mesa)
+			var forma_pata := CylinderShape3D.new()
+			forma_pata.radius = 0.09
+			forma_pata.height = 0.9
+			_colision("ColisionPata_%s" % lado, forma_pata, Vector3(lado, 0.45, 0.0), Vector3.ZERO, mesa)
+			_pieza_asamblea("Pie_%s" % lado, Vector3(0.45, 0.1, 0.9), Vector3(lado, 0.05, 0.0), metal, mesa)
+
+		for j in 2:
+			var silla := Node3D.new()
+			silla.name = "Silla_%02d_%d" % [i, j]
+			silla.position = radial * 16.0 + Vector3((j * 2 - 1) * 0.8, 0.0, 0.0).rotated(Vector3.UP, ang)
+			silla.rotation.y = ang
+			asamblea.add_child(silla)
+			_construir_asiento_asamblea(silla, false, metal, tapizado, oro)
+
+		var sillon := Node3D.new()
+		sillon.name = "Sillon_%02d" % i
+		sillon.position = radial * 11.5
+		sillon.rotation.y = ang + PI
+		asamblea.add_child(sillon)
+		_construir_asiento_asamblea(sillon, true, metal, tapizado, oro)
+
+
+func _desactivar_zona_asamblea(nodo: Node) -> void:
+	if nodo is Node3D:
+		(nodo as Node3D).hide()
+	elif nodo is CanvasItem:
+		(nodo as CanvasItem).hide()
+	if nodo is Area3D:
+		(nodo as Area3D).set_deferred("monitoring", false)
+	if nodo is CollisionShape3D:
+		(nodo as CollisionShape3D).set_deferred("disabled", true)
+	nodo.process_mode = Node.PROCESS_MODE_DISABLED
+	nodo.set_process(false)
+	nodo.set_physics_process(false)
+	nodo.set_process_input(false)
+	nodo.set_process_unhandled_input(false)
+	nodo.set_process_unhandled_key_input(false)
+	# También desactivar descendientes con PROCESS_MODE_ALWAYS propio.
+	for hijo in nodo.get_children():
+		_desactivar_zona_asamblea(hijo)
+
+
+func _pieza_asamblea(nombre: String, tam: Vector3, pos: Vector3,
+		mat: Material, padre: Node3D) -> void:
+	_caja(nombre, tam, pos, mat, Vector3.ZERO, padre)
+	var forma := BoxShape3D.new()
+	forma.size = tam
+	_colision("Colision" + nombre, forma, pos, Vector3.ZERO, padre)
+
+
+func _construir_asiento_asamblea(padre: Node3D, es_sillon: bool,
+		metal: Material, tapizado: Material, oro: Material) -> void:
+	var ancho := 1.3 if es_sillon else 0.7
+	var fondo := 1.05 if es_sillon else 0.75
+	_pieza_asamblea("Asiento", Vector3(ancho, 0.22, fondo), Vector3(0.0, 0.55, 0.0), tapizado, padre)
+	# Frente local -Z: las sillas miran al centro y los sillones a la mesa.
+	_pieza_asamblea("Respaldo", Vector3(ancho, 0.85, 0.18), Vector3(0.0, 1.02, fondo * 0.5 - 0.09), tapizado, padre)
+	_pieza_asamblea("RemateRespaldo", Vector3(ancho, 0.05, 0.2), Vector3(0.0, 1.47, fondo * 0.5 - 0.09), oro, padre)
+	for x in [-1.0, 1.0]:
+		for z in [-1.0, 1.0]:
+			_pieza_asamblea("Pata_%s_%s" % [x, z], Vector3(0.09, 0.44, 0.09),
+					Vector3(x * (ancho * 0.5 - 0.1), 0.22, z * (fondo * 0.5 - 0.1)), metal, padre)
+		if es_sillon:
+			_pieza_asamblea("Brazo_%s" % x, Vector3(0.18, 0.35, fondo),
+					Vector3(x * (ancho * 0.5 - 0.09), 0.82, 0.0), tapizado, padre)
+
 
 func lucia() -> Node3D:
 	return _lucia

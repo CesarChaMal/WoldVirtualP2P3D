@@ -50,6 +50,7 @@ var _editor: Node3D = null
 var _avatar_id := ""
 var _cruzando := false
 var _fase: StringName = &""
+var _regreso := false
 
 # Sistema Blockchain DAO de 4 bloques en estaciones
 var _bloques_dao: Array = []
@@ -75,19 +76,7 @@ var _paso_label: Label = null
 var _pista_label: Label = null
 var _tween_dialogo: Tween = null
 
-# Voz de LucIA: TTS nativo del sistema (DisplayServer), sin dependencias extra.
-# En headless no hay voces y todo queda en subtítulo, así que las pruebas
-# automáticas no necesitan audio.
-var _voz_id := ""
-var _voz_activa := false
-var _voz_buscada := false
 var _voz_oficial: Node = null
-## Fin estimado de la locución nativa. `tts_is_speaking()` aborta el motor
-## WinRT en este Godot 4.7.2, así que el fin se calcula al lanzar la frase.
-var _voz_fin_ms := 0
-## Solo se detiene el TTS nativo si alguna frase llegó a usarlo: tocar WinRT
-## sin necesidad aborta el motor en equipos sin salida de audio.
-var _tts_usado := false
 
 
 func set_nick(nick: String) -> void:
@@ -99,6 +88,19 @@ func set_ocupados(plazas: Array) -> void:
 
 
 func _ready() -> void:
+	if get_tree().current_scene == self or get_parent() == get_tree().root:
+		name = "WoldVirtual3DP2P"
+		if get_node_or_null("Sonda") == null:
+			var sonda := preload("res://gdscrip/Sonda.gd").new()
+			sonda.name = "Sonda"
+			add_child(sonda)
+	if FileAccess.file_exists("user://abrir_recepcion.flag"):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path("user://abrir_recepcion.flag"))
+	var perfil := ConfigFile.new()
+	if perfil.load("user://registro.cfg") == OK and FileAccess.file_exists("user://cuenta.json"):
+		var cuenta = JSON.parse_string(FileAccess.get_file_as_string("user://cuenta.json"))
+		_regreso = cuenta is Dictionary and not str(cuenta.get("cuenta_hash", "")).is_empty() \
+				and not str(perfil.get_value("jugador", "avatar_scene", "")).is_empty()
 	_entorno()
 	_mar()
 	_montar_dao()
@@ -135,11 +137,16 @@ func _ready() -> void:
 	_voz_oficial = VozLucIA.new()
 	_voz_oficial.name = "VozLucIA"
 	add_child(_voz_oficial)
-	# La voz nativa se busca solo si falta el WAV oficial: enumerar las voces
-	# WinRT al arrancar puede abortar el motor en equipos sin audio.
 	if _portal != null and _portal.has_signal("portal_cruzado"):
 		_portal.connect("portal_cruzado", _al_cruzar_portal)
-	_secuencia()
+	if _regreso:
+		_interior.call("configurar_asamblea")
+		if _plaza != null:
+			_plaza.hide()
+			_plaza.process_mode = Node.PROCESS_MODE_DISABLED
+		_recepcion_ciudadano()
+	else:
+		_secuencia()
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +257,7 @@ func _construir_hud() -> void:
 	add_child(_hud)
 
 	var cabecera := Label.new()
-	cabecera.text = "SEDE DE LA DAO · ALTA DE CIUDADANO"
+	cabecera.text = "SEDE DE LA DAO · ASAMBLEAS" if _regreso else "SEDE DE LA DAO · ALTA DE CIUDADANO"
 	cabecera.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	cabecera.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	cabecera.offset_left = -520.0
@@ -349,31 +356,6 @@ func _decir(nombre: String, texto: String, segundos := 4.0) -> void:
 # Voz de LucIA
 # ---------------------------------------------------------------------------
 
-func _preparar_voz() -> void:
-	_voz_buscada = true
-	if not DisplayServer.has_method("tts_get_voices"):
-		return
-	var voces: Array = DisplayServer.tts_get_voices()
-	# La voz oficial del sistema general (voz_lucia.py) es Laura. Godot expone
-	# las mismas OneCore; se elige en ese orden y nunca la primera que aparezca,
-	# que en este equipo es Pablo (masculina).
-	for preferida in ["laura", "helena", "elvira", "sabina", "pablo"]:
-		for voz in voces:
-			if not str(voz.get("language", "")).begins_with("es"):
-				continue
-			if preferida in str(voz.get("name", "")).to_lower():
-				_voz_id = str(voz.get("id", ""))
-				break
-		if not _voz_id.is_empty():
-			break
-	if _voz_id.is_empty():
-		for voz in voces:
-			if str(voz.get("language", "")).begins_with("es"):
-				_voz_id = str(voz.get("id", ""))
-				break
-	_voz_activa = not _voz_id.is_empty()
-
-
 ## LucIA habla en segundo plano: subtítulo y voz a la vez.
 func _lucia_dice(texto: String, segundos := 0.0) -> void:
 	if segundos <= 0.0:
@@ -382,57 +364,23 @@ func _lucia_dice(texto: String, segundos := 0.0) -> void:
 	_voz(texto)
 
 
-## Voz oficial de LucIA si ya está sintetizada; si no, voz nativa al momento
-## mientras el sintetizador oficial deja el WAV en caché.
 func _voz(texto: String) -> void:
-	if _voz_oficial != null and bool(_voz_oficial.call("decir", texto)):
-		# La voz nativa de una línea anterior no debe seguir sonando sobre la oficial.
-		_voz_fin_ms = 0
-		if _tts_usado and DisplayServer.has_method("tts_stop"):
-			DisplayServer.tts_stop()
-			_tts_usado = false
-		return
-	_hablar(texto)
-
-
-func _hablar(texto: String) -> void:
-	if texto.strip_edges().is_empty():
-		return
 	if _voz_oficial != null:
-		_voz_oficial.call("callar")
-	if not _voz_activa and not _voz_buscada:
-		_preparar_voz()
-	if not _voz_activa:
-		return
-	# Ritmo 1.16x y volumen de acompañamiento: el mismo carácter que la voz
-	# oficial del sistema general, sin tapar el ambiente de la DAO.
-	DisplayServer.tts_speak(texto, _voz_id, 70.0, 1.06, 1.16, 0, true)
-	_tts_usado = true
-	var palabras := texto.split(" ", false).size()
-	_voz_fin_ms = Time.get_ticks_msec() + int(
-			clampf(0.6 + float(palabras) / 3.0, 1.2, 25.0) * 1000.0)
+		_voz_oficial.call("decir", texto)
 
 
 func _callar() -> void:
-	_voz_fin_ms = 0
 	if _voz_oficial != null:
 		_voz_oficial.call("callar")
-	if _tts_usado and DisplayServer.has_method("tts_stop"):
-		DisplayServer.tts_stop()
-	_tts_usado = false
 
 
-## True mientras LucIA sigue pronunciando la línea actual, sea el WAV oficial
-## o la voz nativa del sistema.
 func _voz_sonando() -> bool:
-	if _voz_oficial != null and bool(_voz_oficial.call("esta_hablando")):
-		return true
-	return _voz_fin_ms > Time.get_ticks_msec()
+	return _voz_oficial != null and bool(_voz_oficial.call("esta_hablando"))
 
 
 ## Espera a que la línea actual termine. El tope evita bloquear el alta si el
 ## backend de voz no confirma el final (driver sin audio, TTS colgado).
-func _esperar_voz(maximo := 20.0) -> void:
+func _esperar_voz(maximo := 90.0) -> void:
 	var limite := Time.get_ticks_msec() + int(maximo * 1000.0)
 	while _voz_sonando() and Time.get_ticks_msec() < limite:
 		await get_tree().process_frame
@@ -663,29 +611,113 @@ func _columna(pos: Vector3, dur := 0.9) -> void:
 # Secuencia del alta
 # ---------------------------------------------------------------------------
 
+func _recepcion_ciudadano() -> void:
+	_marcar(&"asamblea")
+	_paso("Asamblea de la DAO")
+	_encuadrar(Vector3(18.0, 44.8, 8.0), Vector3(0.0, 42.9, 0.0), 48.0)
+	_jugador.visible = true
+	_lucia_dice("Bienvenido de nuevo a la DAO. Tu cuenta y tu avatar se conservan. La sede está preparada para las asambleas.", 9.0)
+	await _esperar_voz()
+	if _cruzando:
+		return
+	await _entregar_control()
+	if _cruzando:
+		return
+	_jugador.global_position = Vector3(0.0, SUELO_ATRIO + 0.03, 9.0)
+	_orientar(Vector3(14.0, SUELO_ATRIO, 0.0))
+	_jugador.call("snap_camera")
+	_paso("Asamblea de la DAO")
+	_marcar(&"asamblea")
+
+
+func _solicitar_nick() -> void:
+	_marcar(&"nick")
+	_paso("2 · Tu nombre en el metaverso")
+	_lucia_dice("¿Cómo quieres que te llame? Escribe tu nick antes de elegir tu avatar.", 5.0)
+	var panel := PanelContainer.new()
+	panel.name = "SolicitudNick"
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.offset_left = -220.0
+	panel.offset_right = 220.0
+	panel.offset_top = -70.0
+	panel.offset_bottom = 70.0
+	_hud.add_child(panel)
+	var columna := VBoxContainer.new()
+	panel.add_child(columna)
+	var titulo := Label.new()
+	titulo.text = "Tu nick"
+	columna.add_child(titulo)
+	var entrada := LineEdit.new()
+	entrada.max_length = 32
+	entrada.placeholder_text = "Escribe tu nombre"
+	entrada.text = _nick
+	columna.add_child(entrada)
+	var confirmar := Button.new()
+	confirmar.text = "Validar nick y conexión"
+	confirmar.disabled = entrada.text.strip_edges().is_empty()
+	columna.add_child(confirmar)
+	entrada.text_changed.connect(func(texto: String): confirmar.disabled = texto.strip_edges().is_empty())
+	entrada.text_submitted.connect(func(_texto: String):
+		if not confirmar.disabled:
+			confirmar.pressed.emit())
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	entrada.grab_focus()
+	if autoprueba:
+		entrada.text = "PruebaDAO"
+		confirmar.disabled = false
+		confirmar.call_deferred("emit_signal", "pressed")
+	var estado := Label.new()
+	estado.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	columna.add_child(estado)
+	var sonda := get_node_or_null("Sonda")
+	if sonda == null:
+		sonda = get_parent().get_node_or_null("Sonda")
+	while true:
+		await confirmar.pressed
+		var candidato := entrada.text.strip_edges()
+		if candidato.is_empty():
+			estado.text = "Escribe un nick no vacío."
+			continue
+		entrada.editable = false
+		confirmar.disabled = true
+		estado.text = "Validando conexión WebSocket y respuesta del anfitrión…"
+		var resultado: Dictionary = {"ok": false, "error": "No hay Sonda de sesión"}
+		if sonda != null:
+			resultado = await sonda.validar_conexion()
+		if bool(resultado.get("ok", false)):
+			_nick = candidato
+			_ocupados = resultado.get("ocupados", []).duplicate()
+			break
+		estado.text = str(resultado.get("error", "Conexión no validada")) + ". Reintenta."
+		entrada.editable = true
+		confirmar.disabled = entrada.text.strip_edges().is_empty()
+		entrada.grab_focus()
+	_carrusel.call("set_ocupados", _ocupados)
+	_carrusel.call("set_nick", _nick)
+	panel.queue_free()
+	await _esperar_voz()
+
+
 func _secuencia() -> void:
 	_marcar(&"despacho")
 	_paso("1 · El despacho de LucIA")
 	_encuadrar(Vector3(2.4, 43.4, 3.6), Vector3(0.0, 42.95, -0.6), 36.0)
+	if _lucia != null:
+		var frente := _camara.global_position - _lucia.global_position
+		_lucia.global_rotation.y = atan2(frente.x, frente.z)
 
-	# Si no hay nick, recuperar o pedir uno por defecto
-	if _nick.is_empty():
-		var ruta_c := "user://cuenta.json"
-		if FileAccess.file_exists(ruta_c):
-			var cr := FileAccess.get_file_as_string(ruta_c)
-			var d = JSON.parse_string(cr)
-			if typeof(d) == TYPE_DICTIONARY:
-				_nick = str(d.get("nick", "CiudadanoDAO")).strip_edges()
-		if _nick.is_empty():
-			_nick = "CiudadanoDAO"
-
-	var saludo_lucia := "Bienvenido a la Sede de la DAO, %s. Aquí tu cuenta nace como un bloque criptográfico." % _nick
+	if _portal is Node3D:
+		(_portal as Node3D).hide()
+	var saludo_lucia := "Bienvenido a la Sede de la DAO. Soy LucIA y te acompañaré durante el registro."
 	_lucia_dice(saludo_lucia, 5.5)
 	await _esperar(2.6)
 	_tomar_camara(Vector3(1.7, 43.35, 2.9), Vector3(0.0, 43.0, -0.6), 2.0, 34.0)
 	# Cada frase termina antes de empezar la siguiente: nada de cortes a medias.
 	await _esperar_voz()
-	_lucia_dice("Para garantizar la seguridad total del usuario, la cuenta se fortalece con 4 bloques adicionales en la plaza.", 5.0)
+	await _solicitar_nick()
+	if _cruzando:
+		return
+	_lucia_dice("Tu cuenta se registra en las cuatro estaciones de la plaza.", 5.0)
 	await _esperar_voz()
 
 	_lucia_dice("Antes de recorrer la sede, elige tu avatar: será tu identidad aquí.", 4.0)
@@ -1062,16 +1094,10 @@ func _caminar_al_espejo() -> void:
 	if _zona != null and _zona.has_method("punto_puesto"):
 		puesto = _zona.call("punto_puesto")
 	_seguir = true
-	# Recta desde el puesto sur hasta la puerta sur del tambor y, ya dentro,
-	# rodeo por el este del portal y por el hueco entre las estatuas del aro.
-	# El paso se pega al del jugador en este tramo: con el costado de siempre,
-	# el rodeo de LucIA rozaba los pedestales del sur.
 	await _caminar([
 		_jugador.global_position,
-		_punto(0.0, 21.0, SUELO_ATRIO),
-		_punto(4.9, 19.2, SUELO_ATRIO),
-		_punto(4.4, 15.4, SUELO_ATRIO),
-		_punto(2.2, 12.9, SUELO_ATRIO),
+		_punto(0.0, 24.0, SUELO_ATRIO),
+		_punto(0.0, 20.0, SUELO_ATRIO),
 		puesto,
 	], 2.0, true, 0.75)
 	# El editor vive dentro de la DAO: el avatar se gira al frente para que la
@@ -1138,16 +1164,50 @@ func _entregar_control() -> void:
 	_jugador.call("activar_control")
 	_jugador.call("snap_camera")
 	if _portal is Area3D:
+		(_portal as Area3D).show()
 		(_portal as Area3D).monitoring = true
 	if _carrusel != null and _carrusel.has_method("set_auto_abrir"):
-		_carrusel.call("set_auto_abrir", true)
+		_carrusel.call("set_auto_abrir", false)
 	# El aro sigue parado: el alta no lo suelta hasta cruzar el portal.
 	_baliza_portal()
-	_lucia_dice("Desde aquí caminas tú. Sigue la baliza hasta el portal: al cruzarlo nace tu isla.", 7.0)
+	_lucia_dice("Puedes recorrer la asamblea. Cruza el portal cuando quieras volver a tu isla." if _regreso else "Desde aquí caminas tú. Sigue la baliza hasta el portal: al cruzarlo nace tu isla.", 7.0)
 	_pista("WASD / flechas para moverte · ratón con botón derecho para mirar · SHIFT para correr")
 	_montar_boton_guardar_dao()
+	_montar_chat_dao()
 	if autoprueba:
 		_auto_portal()
+
+
+func _montar_chat_dao() -> void:
+	if get_node_or_null("ChatLucIADAO") != null:
+		return
+	var escena := load("res://lucia3D/GLTF_lucIA/AreaDeTrabajo/Constructor3D_IA/LucIA_Interfaz.tscn") as PackedScene
+	var chat: Node3D = escena.instantiate()
+	chat.name = "ChatLucIADAO"
+	chat.call("set_modo_dao", _lucia)
+	chat.connect("conversacion_abierta", func():
+		_callar()
+		_dialogo.hide()
+		_hud.hide()
+		_jugador.set_process_input(false)
+		_jugador.set_physics_process(false))
+	chat.connect("conversacion_cerrada", func():
+		if not _cruzando:
+			_hud.show()
+			_jugador.set_process_input(true)
+			_jugador.set_physics_process(true))
+	add_child(chat)
+	var btn := Button.new()
+	btn.name = "BotonHablarLucIA"
+	btn.text = "Hablar con LucIA · T"
+	btn.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	btn.offset_left = 34.0
+	btn.offset_right = 300.0
+	btn.offset_top = -64.0
+	btn.offset_bottom = -20.0
+	btn.add_theme_font_size_override("font_size", 16)
+	btn.pressed.connect(func(): chat.call("enfocar_chat"))
+	_hud.add_child(btn)
 
 
 func _montar_boton_guardar_dao() -> void:
@@ -1302,7 +1362,14 @@ func _al_cruzar_portal() -> void:
 	var ruta := Avatares.ruta_actual()
 	if ruta.is_empty() and not _avatar_id.is_empty():
 		ruta = Catalogo.escena_de(_avatar_id)
-	onboarding_completado.emit(ruta)
+	if onboarding_completado.get_connections().is_empty():
+		var marca := FileAccess.open("user://onboarding_dao_completado.flag", FileAccess.WRITE)
+		if marca != null:
+			marca.store_string("1")
+			marca.close()
+		get_tree().change_scene_to_file(RUTA_MUNDO)
+	else:
+		onboarding_completado.emit(ruta)
 
 
 func _mostrar_creando() -> void:

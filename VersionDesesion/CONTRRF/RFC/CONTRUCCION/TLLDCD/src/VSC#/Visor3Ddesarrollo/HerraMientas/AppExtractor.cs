@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
@@ -8,9 +9,9 @@ using Visor3D.Services;
 namespace Visor3D
 {
     /// <summary>
-    /// Extrae los recursos embebidos (motor Godot + mundo .pck) a
+    /// Extrae los recursos embebidos (motor Godot, mundo .pck y LucIA) a
     /// %LOCALAPPDATA%\WoldVirtualP2P3D\runtime\<versión>\.
-    /// Solo lo hace la primera vez o cuando cambia la versión del runtime.
+    /// Verifica su integridad antes de reutilizarlos.
     /// </summary>
     public static class AppExtractor
     {
@@ -78,6 +79,14 @@ namespace Visor3D
         /// <summary>Plantilla del editor de construcción extraída del .exe.</summary>
         public static string ConstructorTemplateDir => Path.Combine(RuntimeDir, "ConstructorGodot");
 
+        private const string LuciaResourceName = "Visor3D.lucia_runtime.zip";
+
+        public static string LuciaDir => Path.Combine(RuntimeDir, "LucIA");
+        public static string LuciaPythonPath => Path.Combine(LuciaDir, "python", "python.exe");
+        public static string LuciaScriptPath => Path.Combine(LuciaDir, "celebro_3D", "puente_3D", "servidor_lucia.py");
+        public static bool EmbebeLucia =>
+            typeof(AppExtractor).Assembly.GetManifestResourceInfo(LuciaResourceName) != null;
+
         /// <summary>Extrae los recursos si no se ha hecho ya. Devuelve false si falla.</summary>
         public static bool EnsureExtracted()
         {
@@ -86,16 +95,26 @@ namespace Visor3D
                 var assembly = Assembly.GetExecutingAssembly();
                 bool expectsPatch = assembly.GetManifestResourceInfo("Visor3D.dao_patch.pck") != null;
                 bool expectsPck = assembly.GetManifestResourceInfo("Visor3D.wvp3d.pck") != null;
+                bool expectsLucia = EmbebeLucia;
+                string luciaHash = "";
+                if (expectsLucia)
+                {
+                    using var luciaStream = assembly.GetManifestResourceStream(LuciaResourceName)
+                        ?? throw new InvalidDataException("No se pudo leer el runtime embebido de LucIA.");
+                    luciaHash = CalcularSha256(luciaStream);
+                }
                 if (File.Exists(VersionFile) &&
                     File.Exists(GodotExePath) &&
                     Directory.Exists(ConstructorTemplateDir))
                 {
                     var lines = File.ReadAllLines(VersionFile);
-                    if (lines.Length > 0 && lines[0].Trim() == AppVersion)
+                    if (lines.Length > 0 && lines[0].Trim() == AppVersion &&
+                        Array.Exists(lines, line => line == "build_id=" + assembly.ManifestModule.ModuleVersionId))
                     {
                         string expectedPckHash = "";
                         string expectedGodotHash = "";
                         string expectedPatchHash = "";
+                        string expectedLuciaHash = "";
                         for (int i = 1; i < lines.Length; i++)
                         {
                             if (lines[i].StartsWith("pck_sha256=", StringComparison.OrdinalIgnoreCase))
@@ -104,6 +123,8 @@ namespace Visor3D
                                 expectedGodotHash = lines[i].Substring("godot_sha256=".Length).Trim();
                             else if (lines[i].StartsWith("dao_patch_sha256=", StringComparison.OrdinalIgnoreCase))
                                 expectedPatchHash = lines[i].Substring("dao_patch_sha256=".Length).Trim();
+                            else if (lines[i].StartsWith("lucia_sha256=", StringComparison.OrdinalIgnoreCase))
+                                expectedLuciaHash = lines[i].Substring("lucia_sha256=".Length).Trim();
                         }
 
                         // Reutilizar solo si los hashes coinciden (H4: fiabilidad de extracción).
@@ -114,7 +135,9 @@ namespace Visor3D
                         bool godotOk = string.IsNullOrEmpty(expectedGodotHash) || CalcularSha256(GodotExePath) == expectedGodotHash;
                         bool patchOk = !expectsPatch ||
                             (!string.IsNullOrEmpty(expectedPatchHash) && CalcularSha256(DaoPatchPath) == expectedPatchHash);
-                        if (pckOk && godotOk && patchOk)
+                        bool luciaOk = !expectsLucia ||
+                            (expectedLuciaHash == luciaHash && VerificarLucia(assembly));
+                        if (pckOk && godotOk && patchOk && luciaOk)
                         {
                             return true;
                         }
@@ -166,15 +189,21 @@ namespace Visor3D
                 // 3. Plantilla del editor de construcción (opcional).
                 ExtractResource(assembly, "Visor3D.constructor_godot.zip", ConstructorTemplateDir);
 
+                if (expectsLucia &&
+                    (!ExtractResource(assembly, LuciaResourceName, LuciaDir) || !VerificarLucia(assembly)))
+                    throw new InvalidDataException("El runtime de LucIA está incompleto o no coincide con el ZIP embebido.");
+
                 string pckHash = CalcularSha256(PckPath) ?? "";
                 string godotHash = CalcularSha256(godotEnServidor) ?? "";
                 string patchHash = CalcularSha256(DaoPatchPath) ?? "";
                 File.WriteAllLines(VersionFile, new[]
                 {
                     AppVersion,
+                    "build_id=" + assembly.ManifestModule.ModuleVersionId,
                     $"pck_sha256={pckHash}",
                     $"godot_sha256={godotHash}",
-                    $"dao_patch_sha256={patchHash}"
+                    $"dao_patch_sha256={patchHash}",
+                    $"lucia_sha256={luciaHash}"
                 });
                 return true;
             }
@@ -191,19 +220,71 @@ namespace Visor3D
             }
         }
 
+        private static bool VerificarLucia(Assembly assembly)
+        {
+            using var stream = assembly.GetManifestResourceStream(LuciaResourceName);
+            if (stream == null) return false;
+
+            using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
+            var esenciales = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                Path.GetFullPath(LuciaPythonPath),
+                Path.GetFullPath(Path.Combine(LuciaDir, "python", "python315.dll")),
+                Path.GetFullPath(LuciaScriptPath),
+                Path.GetFullPath(Path.Combine(LuciaDir, "celebro_3D", "nucleo", "orquestador_lucia.py"))
+            };
+
+            foreach (var entry in archive.Entries)
+            {
+                if (string.IsNullOrEmpty(entry.Name)) continue;
+                string targetPath = ResolverRutaEntrada(LuciaDir, entry.FullName);
+                var file = new FileInfo(targetPath);
+                if (!file.Exists || file.Length != entry.Length ||
+                    (esenciales.Contains(targetPath) && entry.Length == 0))
+                    return false;
+
+                using var entryStream = entry.Open();
+                if (CalcularSha256(entryStream) != CalcularSha256(targetPath)) return false;
+                esenciales.Remove(targetPath);
+            }
+
+            return esenciales.Count == 0;
+        }
+
+        private static string CalcularSha256(Stream stream)
+        {
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            return Convert.ToHexString(sha.ComputeHash(stream)).ToLowerInvariant();
+        }
+
         private static string? CalcularSha256(string path)
         {
             try
             {
                 if (!File.Exists(path)) return null;
-                using var sha = System.Security.Cryptography.SHA256.Create();
                 using var fs = File.OpenRead(path);
-                return Convert.ToHexString(sha.ComputeHash(fs)).ToLowerInvariant();
+                return CalcularSha256(fs);
             }
             catch
             {
                 return null;
             }
+        }
+
+        private static string ResolverRutaEntrada(string destDir, string entryName)
+        {
+            string relativePath = entryName.Replace('\\', '/');
+            if (Path.IsPathRooted(relativePath) || relativePath.Contains(':'))
+                throw new InvalidDataException($"Ruta absoluta o inválida en ZIP: {entryName}");
+
+            string destDirFull = Path.GetFullPath(destDir);
+            string destDirWithSep = Path.EndsInDirectorySeparator(destDirFull)
+                ? destDirFull
+                : destDirFull + Path.DirectorySeparatorChar;
+            string targetPath = Path.GetFullPath(Path.Combine(destDirFull, relativePath));
+            if (!targetPath.StartsWith(destDirWithSep, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException($"Ruta fuera del directorio de extracción: {entryName}");
+            return targetPath;
         }
 
         private static bool ExtractResource(Assembly asm, string resourceName, string destDir)
@@ -216,18 +297,11 @@ namespace Visor3D
             }
 
             using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
-            string destDirFull = Path.GetFullPath(destDir);
-            string destDirWithSep = destDirFull.EndsWith(Path.DirectorySeparatorChar.ToString())
-                ? destDirFull
-                : destDirFull + Path.DirectorySeparatorChar;
 
             foreach (var entry in archive.Entries)
             {
                 if (string.IsNullOrEmpty(entry.Name)) continue; // Carpeta
-                string cleanEntryName = entry.FullName.TrimStart('/', '\\');
-                string targetPath = Path.GetFullPath(Path.Combine(destDirFull, cleanEntryName));
-                if (!targetPath.StartsWith(destDirWithSep, StringComparison.OrdinalIgnoreCase))
-                    continue;
+                string targetPath = ResolverRutaEntrada(destDir, entry.FullName);
 
                 string? parentDir = Path.GetDirectoryName(targetPath);
                 if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))

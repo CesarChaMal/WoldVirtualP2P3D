@@ -115,6 +115,7 @@ func _ready() -> void:
 	# normal del ChunkManager.
 	if FileAccess.file_exists(onboarding_dao_completado):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(onboarding_dao_completado))
+		_iniciar_en_dao = false
 		print("[Boot] Onboarding DAO completado; cargando directamente la isla personal")
 		_continuar_registrado()
 		return
@@ -232,6 +233,9 @@ func _mostrar_onboarding() -> void:
 
 
 func _on_onboarding_completado(avatar_scene: String) -> void:
+	if is_instance_valid(_onboarding):
+		_nick = str(_onboarding.get("_nick")).strip_edges()
+	_iniciar_en_dao = false
 	_avatar_scene = avatar_scene
 	var id := Catalogo.id_de_ruta(avatar_scene)
 	if not id.is_empty():
@@ -467,6 +471,14 @@ func _on_portal_cruzado() -> void:
 
 func _entrar_a_isla() -> void:
 	_mostrar_carga()
+	if preload("res://gdscrip/Red.gd").sesion_validada():
+		_carga_texto = "Esperando el mundo compartido del anfitrión"
+		var resultado: Dictionary = await _sonda.esperar_mundo()
+		if not bool(resultado.get("ok", false)):
+			_ocultar_carga()
+			_mostrar_aviso(str(resultado.get("error", "Mundo no disponible")))
+			return
+	_sonda.liberar_eco()
 	var mundo: Node3D = MUNDO_SCENE.instantiate() as Node3D
 	mundo.name = "ISLA3Dblock"
 	_mundo = mundo

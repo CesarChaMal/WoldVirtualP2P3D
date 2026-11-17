@@ -221,7 +221,7 @@ namespace Visor3D
             };
             _timerLucia.Tick += async (s, e) =>
             {
-                if (_iniciandoLucia || _servidorLucia.EstaListo()) return;
+                if (_iniciandoLucia) return;
                 _iniciandoLucia = true;
                 try { await IniciarServidorLuciaAsync(); }
                 finally { _iniciandoLucia = false; }
@@ -726,7 +726,9 @@ namespace Visor3D
             try
             {
                 bool ok = await _servidorLucia.IniciarAsync();
-                TxtEstadoLuciaTop.Text = ok ? "🧠 LucIA: 8765" : "🔴 LucIA: parada";
+                TxtEstadoLuciaTop.Text = ok ? "LucIA: conectada" :
+                    (_servidorLucia.UltimoError?.Contains("Ollama", StringComparison.OrdinalIgnoreCase) == true
+                        ? "LucIA: revisar Ollama/modelo" : "LucIA: error de arranque");
                 TxtEstadoLuciaTop.ToolTip = ok
                     ? "Cerebro de LucIA escuchando en 127.0.0.1:8765"
                     : (_servidorLucia.UltimoError ?? "No se pudo arrancar LucIA");
@@ -1650,10 +1652,10 @@ namespace Visor3D
                     // El botón «Oficina de Lucía 3D» debe abrir el alta nueva de la
                     // DAO. Sin `--sin-recepcion`, Boot ve la marca y monta el
                     // onboarding DAO en vez de la recepción antigua.
-                    if (recepcionSolicitada)
-                        userArgs = "--dao-lobby";
+                    if (recepcionSolicitada || (!cuentaLocalCompleta && string.IsNullOrWhiteSpace(_urlAmigoPendiente)))
+                        scenePath = "res://lucia3D/IslaUnicaLucIA/ONBOARDING/OnboardingDAO.tscn";
                     else if (cuentaLocalCompleta)
-                        userArgs = "--sin-recepcion --dao-lobby";
+                        userArgs = "--sin-recepcion";
 #if GODOT_SOURCE_PREVIEW
                     else if (string.IsNullOrWhiteSpace(_urlAmigoPendiente))
                         userArgs = "--sin-recepcion --dao-lobby --dao-preview";
@@ -2079,10 +2081,34 @@ namespace Visor3D
             return resultado;
         }
 
+        private string GuardarWebNodoRelay()
+        {
+            string dir = Path.Combine(TestUserDataDir, "user");
+            Directory.CreateDirectory(dir);
+            string ruta = Path.Combine(dir, "webnodo_relay.json");
+            string temporal = ruta + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllBytes(temporal, JsonSerializer.SerializeToUtf8Bytes(new
+                {
+                    invitacion = App.WebNodo.TokenInvitacion,
+                    chat_enabled = App.WebNodo.ChatEnabled,
+                    chat_port = App.WebNodo.ChatLocalPort
+                }));
+                File.Move(temporal, ruta, true);
+            }
+            finally
+            {
+                if (File.Exists(temporal)) File.Delete(temporal);
+            }
+            return ruta;
+        }
+
         private void GuardarP2PSessionConfig()
         {
             try
             {
+                GuardarWebNodoRelay();
                 bool hasTarget = TryParseConnectionTarget(_urlAmigoPendiente, out string targetHost, out int targetPort);
                 bool esClienteRemoto = hasTarget && targetHost != "127.0.0.1" && targetHost != "localhost" && !string.IsNullOrEmpty(targetHost);
                 // misma raíz que la línea de órdenes del motor, para que el fichero de
@@ -2299,6 +2325,7 @@ namespace Visor3D
 
             App.WebNodo.ChatEnabled = _chatServer?.IsRunning == true;
             App.WebNodo.ChatLocalPort = _chatServer?.Port ?? 0;
+            GuardarWebNodoRelay();
 
             _chatVoice = new ChatVoice();
             _chatVoice.MicFrame += OnMicrofonoChat;
@@ -2352,6 +2379,7 @@ namespace Visor3D
 
             App.WebNodo.ChatEnabled = false;
             App.WebNodo.ChatLocalPort = 0;
+            GuardarWebNodoRelay();
 
             _nombresChat.Clear();
             _tilesChat.Clear();
@@ -4056,10 +4084,17 @@ namespace Visor3D
                 if (!File.Exists(python) || !File.Exists(script))
                     return false;
 
+                string dirUsuario = Path.Combine(TestUserDataDir, "user");
+                Directory.CreateDirectory(dirUsuario);
+                string releasePortal = Path.Combine(dirUsuario, "webnodo_release.json");
+                string sesion = Path.Combine(dirUsuario, "p2p_session.json");
+                WebNodoService.GuardarReleasePortal(releasePortal);
+                string relay = GuardarWebNodoRelay();
+
                 _webNodoHelper = Process.Start(new ProcessStartInfo
                 {
                     FileName = python,
-                    Arguments = $"\"{script}\" --puerto 3030 --exe \"{exe}\"",
+                    Arguments = $"\"{script}\" --puerto 3030 --exe \"{exe}\" --release \"{releasePortal}\" --sesion \"{sesion}\" --relay \"{relay}\"",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                 });
