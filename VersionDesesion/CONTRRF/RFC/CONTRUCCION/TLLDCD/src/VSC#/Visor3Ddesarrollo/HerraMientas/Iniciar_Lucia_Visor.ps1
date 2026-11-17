@@ -16,6 +16,9 @@ for ($i = 0; $i -lt 12 -and $cursor; $i++) {
     if ($parent -eq $cursor) { break }
     $cursor = $parent
 }
+if (-not $src) {
+    $src = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\..\.."))
+}
 
 # El Python privado del taller permanece fuera del .exe; nunca usa el Python del sistema.
 $devDir = if ($src) {
@@ -41,7 +44,7 @@ if (-not (Test-Path $py) -and $src) { $py = Join-Path $src "LC_STM\python\python
 
 $srv = if ($src) { Join-Path $src "MTBGT\WoldVirtualP2P3D\lucia3D\GLTF_lucIA\celebro_3D\puente_3D\servidor_lucia.py" } else { "" }
 $logDir = Join-Path $env:LOCALAPPDATA "WoldVirtualP2P3D\logs"
-New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+New-Item -ItemType Directory -Force -Path $logDir -ErrorAction SilentlyContinue | Out-Null
 $log = Join-Path $logDir "lucia_ps.log"
 
 if (-not (Test-Path $py)) {

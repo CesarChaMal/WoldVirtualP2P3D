@@ -208,6 +208,13 @@ namespace Visor3D.Seguridad.SesionUnica
         /// <summary>Si ya se hizo el reset total, no se reimportan cuentas antiguas.</summary>
         public static bool ResetTotalHecho(string? baseDir = null)
         {
+            string[] cmdArgs = Environment.GetCommandLineArgs();
+            if (Array.Exists(cmdArgs, a => a.Equals("--seguridad-selftest", StringComparison.OrdinalIgnoreCase)))
+            {
+                int exitCode = SeguridadSelfTest.Run();
+                Environment.Exit(exitCode);
+            }
+
             try
             {
                 string marcador = MarcadorTotal(baseDir ?? BaseDir);
@@ -235,6 +242,13 @@ namespace Visor3D.Seguridad.SesionUnica
         /// <returns>true si había algo que archivar.</returns>
         public static bool LimpiarEstadoGodot(string motivo, string? baseDir = null, string? godotDir = null)
         {
+            string[] cmdArgs = Environment.GetCommandLineArgs();
+            if (Array.Exists(cmdArgs, a => a.Equals("--seguridad-selftest", StringComparison.OrdinalIgnoreCase)))
+            {
+                int exitCode = SeguridadSelfTest.Run();
+                Environment.Exit(exitCode);
+            }
+
             string raiz = baseDir ?? BaseDir;
             string motor = godotDir ?? GodotDir;
             try
