@@ -11,7 +11,7 @@ var _userbase: Node3D = null
 var _expanded := true
 var _cooldown := 0.0
 var _loc_timer := 0.0
-var _current_island := -2 # ultimo indice mostrado (-2 = sin inicializar)
+var _current_island := -999 # ultimo indice mostrado (-999 = sin inicializar)
 var _status_timer := 0.0
 var _register_pending := false
 var _register_wait := 0.0
@@ -19,6 +19,7 @@ var _register_wait := 0.0
 func _ready() -> void:
 	layer = 100
 	visible = true
+	add_to_group("teleport_panel")
 	_build_ui()
 	# Conexion diferida para asegurar que TeleportManager ya hizo _ready
 	call_deferred("_late_connect")
@@ -107,6 +108,11 @@ func _toggle_panel() -> void:
 	if panel != null:
 		panel.visible = _expanded
 
+
+## Abre/cierra el explorador desde otros nodos (por ejemplo, el portal de la DAO).
+func alternar() -> void:
+	_toggle_panel()
+
 func _process(delta: float) -> void:
 	if _cooldown > 0.0:
 		_cooldown -= delta
@@ -114,7 +120,7 @@ func _process(delta: float) -> void:
 		_status_timer -= delta
 		if _status_timer <= 0.0:
 			_status_timer = 0.0
-			_current_island = -2
+			_current_island = -999
 			_refresh_location()
 	if _register_pending:
 		_register_wait -= delta
@@ -143,13 +149,15 @@ func _refresh_location() -> void:
 		return
 	_current_island = idx
 	# Etiqueta y botón con la isla, su dueño y si la propiedad está registrada.
+	# La DAO también es una entrada válida (índice negativo reservado).
 	var txt := "Mar"
-	if idx >= 0 and manager.has_method("get_islands"):
+	if manager.has_method("get_islands"):
 		for entry in manager.call("get_islands"):
 			if int(entry["index"]) == idx:
 				txt = _texto_isla(idx, str(entry.get("nombre", "—")),
 						str(entry.get("uuid", "------")), bool(entry.get("offline", false)),
-						bool(entry.get("propia", false)), bool(entry.get("registrada", false)))
+						bool(entry.get("propia", false)), bool(entry.get("registrada", false)),
+						bool(entry.get("dao", false)))
 				break
 		if txt == "Mar" and idx >= 0:
 			txt = "Isla %d" % idx
@@ -173,9 +181,13 @@ func _on_islands_updated(islands: Array) -> void:
 		var uuid: String = str(entry.get("uuid", "------"))
 		var propia: bool = bool(entry.get("propia", false))
 		var registrada: bool = bool(entry.get("registrada", false))
+		var dao: bool = bool(entry.get("dao", false))
 		var b := Button.new()
-		b.text = _texto_isla(idx, nombre, uuid, offline, propia, registrada)
-		b.tooltip_text = "Teletransportarse a Isla %d (%s)" % [idx, nombre]
+		b.text = _texto_isla(idx, nombre, uuid, offline, propia, registrada, dao)
+		if dao:
+			b.tooltip_text = "Ir a la Isla DAO (sede de LucIA)"
+		else:
+			b.tooltip_text = "Teletransportarse a Isla %d (%s)" % [idx, nombre]
 		b.custom_minimum_size = Vector2(280, 32)
 		b.set_meta("island_index", idx)
 		b.set_meta("offline", offline)
@@ -183,6 +195,7 @@ func _on_islands_updated(islands: Array) -> void:
 		b.set_meta("uuid", uuid)
 		b.set_meta("propia", propia)
 		b.set_meta("registrada", registrada)
+		b.set_meta("dao", dao)
 		b.pressed.connect(_on_goto.bind(idx))
 		list_box.add_child(b)
 	_mark_current_button(_current_island)
@@ -190,7 +203,9 @@ func _on_islands_updated(islands: Array) -> void:
 
 ## Texto con isla, dueño, código e indicador de propiedad persistente.
 func _texto_isla(idx: int, nombre: String, uuid: String, offline: bool,
-		propia: bool = false, registrada: bool = false) -> String:
+		propia: bool = false, registrada: bool = false, dao: bool = false) -> String:
+	if dao:
+		return "DAO · Isla Única LucIA (sede)"
 	var txt := "Isla %d · %s (%s)" % [idx, nombre, uuid]
 	if propia:
 		txt += " · TU ISLA" if registrada else " · TU ISLA (sin registrar)"
@@ -209,7 +224,8 @@ func _mark_current_button(idx: int) -> void:
 			var b_idx: int = int(c.get_meta("island_index"))
 			var base := _texto_isla(b_idx, str(c.get_meta("nombre", "—")),
 					str(c.get_meta("uuid", "------")), bool(c.get_meta("offline", false)),
-					bool(c.get_meta("propia", false)), bool(c.get_meta("registrada", false)))
+					bool(c.get_meta("propia", false)), bool(c.get_meta("registrada", false)),
+					bool(c.get_meta("dao", false)))
 			c.text = ("> " + base) if b_idx == idx else base
 
 func _on_goto(index: int) -> void:

@@ -2,15 +2,15 @@ extends Node3D
 ## Arranque del metaverso (demo local, discusión #86):
 ## 0. RECEPCIÓN LUCIA: crea la cuenta (un bloque = un hash) o saluda al que ya la
 ##    tiene en este PC. No hay contraseña, ni semilla, ni validación de túnel.
-## 1. CARRUSEL: se elige el avatar (24 avatares en 3 turnos de 8).   [solo primera vez]
-## 2. REGISTRO con ese avatar (el nick ya viene fijado por la cuenta).
-## 3. ZONA DEL PORTAL: el avatar camina y lo atraviesa.      [solo primera vez]
-## 4. Ventana de carga hasta que aparece MI isla.
-## 5. Se cierra la carga y queda el mundo jugable en su isla.
+## 1. ALTA EN LA DAO: el nuevo ciudadano recorre el despacho de LucIA, la plaza
+##    de registro, el carrusel, el espejo del avatar y el portal.      [solo alta]
+## 2. Ventana de carga hasta que aparece MI isla, ya registrada por el portal.
+## 3. Se cierra la carga y queda el mundo jugable en su isla.
 ##
 ## Si ya hay cuenta (user://cuenta.json) y avatar (user://registro.cfg),
-## se entra directamente a la isla sin pasar por recepción, carrusel ni registro.
+## se entra directamente a la isla sin pasar por recepción ni alta.
 
+const ONBOARDING_SCENE: PackedScene = preload("res://lucia3D/IslaUnicaLucIA/ONBOARDING/OnboardingDAO.tscn")
 const CARRUSEL_SCENE: PackedScene = preload("res://avatares/CarruselAvatares.tscn")
 const EDITOR_ASPECTO_SCENE: PackedScene = preload("res://avatares/EditorAspecto.tscn")
 const REGISTRO_SCENE: PackedScene = preload("res://ESCENAS/sceneOPTM/constructor/UA/UserAnimados/Import_UserAnimados/ctr_tscn_userBS/scenesconstr/registro.tscn")
@@ -31,6 +31,7 @@ var _registro: Control
 var _zona_portal: Node3D
 var _mundo: Node3D
 var _recepcion: Node3D
+var _onboarding: Node3D
 var _carga: CanvasLayer
 var _carga_label: Label
 var _carga_texto := "Conectando a la red P2P"
@@ -162,7 +163,47 @@ func _on_recepcion_completada(modo: String) -> void:
 	if modo == "existente":
 		_continuar_registrado()
 	else:
+		_mostrar_onboarding()
+
+
+## El alta completa se vive dentro de la DAO (despacho, plaza, carrusel, espejo
+## y portal). Antes de montar el mundo se libera la DAO del alta: la del mundo
+## es la única copia viva de la isla.
+func _mostrar_onboarding() -> void:
+	if _nick.strip_edges().is_empty():
+		_nick = "Invitado"
+	if ONBOARDING_SCENE == null:
 		_mostrar_carrusel()
+		return
+	_mostrar_carga("Preparando la Sede de la DAO")
+	var ocupados: Array = await _sonda.consultar()
+	_ocultar_carga()
+	_onboarding = ONBOARDING_SCENE.instantiate() as Node3D
+	if _onboarding == null:
+		_mostrar_carrusel()
+		return
+	if _onboarding.has_method("set_nick"):
+		_onboarding.call("set_nick", _nick)
+	if _onboarding.has_method("set_ocupados"):
+		_onboarding.call("set_ocupados", ocupados)
+	add_child(_onboarding)
+	_onboarding.connect("onboarding_completado", _on_onboarding_completado)
+
+
+func _on_onboarding_completado(avatar_scene: String) -> void:
+	_avatar_scene = avatar_scene
+	var id := Catalogo.id_de_ruta(avatar_scene)
+	if not id.is_empty():
+		Avatares.guardar(id)
+		Avatares.sincronizar_registro(id, _nick)
+	if _onboarding != null and is_instance_valid(_onboarding):
+		_onboarding.queue_free()
+		_onboarding = null
+	# La DAO del alta debe salir del grupo `isla_unica_lucia` antes de montar el
+	# mundo, o la DAO real se descartaría a sí misma como copia duplicada.
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_entrar_a_isla()
 
 
 

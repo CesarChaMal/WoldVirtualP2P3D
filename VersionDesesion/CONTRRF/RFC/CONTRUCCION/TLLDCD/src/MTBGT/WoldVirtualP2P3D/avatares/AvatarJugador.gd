@@ -233,6 +233,32 @@ func snap_camera() -> void:
 	_actualizar_camara(1.0)
 
 
+## La cinemática del onboarding conduce al avatar: se apagan sus controles y su
+## cámara hasta que el jugador toma el mando.
+func desactivar_control() -> void:
+	set_physics_process(false)
+	set_process_input(false)
+	if camara != null and is_instance_valid(camara):
+		camara.current = false
+
+
+## Devuelve el mando al jugador y pone la cámara a su espalda.
+func activar_control() -> void:
+	es_selector = false
+	es_clon_remoto = false
+	velocity = Vector3.ZERO
+	_crear_camara()
+	if camara != null and is_instance_valid(camara):
+		camara.current = true
+	set_physics_process(true)
+	set_process_input(true)
+	snap_camera()
+
+
+func reproducir_animacion(nombre: String, bucle := true, rapidez := 1.0) -> void:
+	_reproducir(nombre, bucle, rapidez)
+
+
 ## PlayerSync coloca y anima los clones remotos; aquí sólo se elige el clip.
 func fija_estado_remoto(estado: int, _delta: float) -> void:
 	current_animation = estado
