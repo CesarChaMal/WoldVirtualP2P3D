@@ -18,7 +18,6 @@ const Identidad = preload("res://gdscrip/Identidad.gd")
 const REGISTRO_ISLAS := "user://islas_registro.cfg"
 ## Isla Única LucIA (sede de LucIA y futura DAO): fija en el origen, fuera del
 ## reparto por índice, por lo que nunca se duplica ni se retira.
-const RUTA_ISLA_DAO := "res://lucia3D/IslaUnicaLucIA/ESCENAS/IslaUnicaLucIA.tscn"
 
 @export var chunk_size: float = 199.5
 
@@ -37,7 +36,7 @@ var _capas_plantilla: Array = []
 ## y también funciona en LAN. ENet (UDP 8910) queda descartado porque ningún
 ## túnel HTTP transporta UDP, por lo que los clientes remotos nunca conectarían.
 const PUERTO_WS := 8911
-var ws_peer = WebSocketMultiplayerPeer.new()
+var ws_peer: WebSocketMultiplayerPeer = WebSocketMultiplayerPeer.new()
 var next_island_index = 0
 var active_islands = {} # Diccionario: player_id -> island_index
 var owner_names = {} # Diccionario: player_id -> nick del dueño
@@ -60,7 +59,6 @@ var _last_target_host := "127.0.0.1"
 var _last_target_port := PUERTO_WS
 var _is_explicit_client := false
 var _invitacion := ""   # credencial de sesión exigida por el proxy del anfitrión
-var _isla_dao: Node3D = null # Isla Única LucIA ya instanciada en esta máquina
 var _beacon_udp: PacketPeerUDP = null
 var _beacon_timer := 0.0
 
@@ -202,6 +200,11 @@ func _aplicar_asignacion_local(asig: Dictionary) -> void:
 	_avatar_confirmado = true
 	if ruta == anterior:
 		return
+	# No reemplazar al avatar visible por una respuesta tardía del anfitrión
+	# después de que el jugador ya haya entrado a su isla.
+	if _mi_isla_anunciada:
+		print("[ChunkManager] Reserva de avatar tardía; se conserva el avatar activo: ", anterior)
+		return
 	set_player_avatar(ruta)
 	if userbase != null and userbase.has_method("snap_camera"):
 		userbase.call("snap_camera")
@@ -221,10 +224,19 @@ func _limpiar_turnos_obsoletos() -> void:
 			_reciclados.erase(pid)
 
 
+## No inicializar la caché RPC del mundo mientras el peer siga en la sonda.
+func _difundir_mundo(method: String, args: Array, local: bool = false) -> void:
+	for id in multiplayer.get_peers():
+		if not _sondas.has(id):
+			rpc_id.callv([id, method] + args)
+	if local:
+		callv(method, args)
+
+
 func _broadcast_turnos() -> void:
 	if not multiplayer.is_server() or multiplayer.get_peers().is_empty():
 		return
-	rpc("_sync_turnos", {"plazas": _turnos, "reciclados": _reciclados})
+	_difundir_mundo("_sync_turnos", [{"plazas": _turnos, "reciclados": _reciclados}])
 
 
 func mi_turno() -> int:
@@ -248,6 +260,8 @@ func turnos_snapshot() -> Dictionary:
 ## ni quedar en el roster. Lo llama la Sonda del anfitrion.
 func marcar_sonda(id: int) -> void:
 	if not multiplayer.is_server():
+		return
+	if active_islands.has(id) or pending_claims.has(id):
 		return
 	_sondas[id] = true
 	pending_claims.erase(id)
@@ -291,7 +305,7 @@ func _ready():
 	original_island.hide()
 	original_ocean.hide()
 	_desactivar_colision_plantilla()
-	_instanciar_isla_dao()
+	_instanciar_oceano_dao()
 	_mi_nick = _leer_nick()
 	_mi_uuid = Identidad.asegurar_identidad()
 	_mi_isla_guardada = Identidad.leer_mi_isla(_mi_uuid)
@@ -326,10 +340,17 @@ func _ready():
 	print("[ChunkManager/WS]   Host Objetivo: ", target_host)
 	print("[ChunkManager/WS]   Puerto WebSocket (TCP): ", PUERTO_WS)
 
-	# Validación: si el rol es cliente explícito, el host no debe ser loopback.
-	if _is_explicit_client and (target_host == "127.0.0.1" or target_host == "localhost" or target_host.is_empty()):
-		printerr("[ChunkManager/WS] ❌ INCONSISTENCIA: Rol cliente forzado pero host objetivo es loopback o vacío ('", target_host, "'). No se iniciará como cliente remoto.")
-		_is_explicit_client = false
+	if Red.sesion_validada():
+		var existente = multiplayer.multiplayer_peer
+		if not existente is WebSocketMultiplayerPeer or existente.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+			printerr("[ChunkManager/WS] Sesión validada desconectada; no hay fallback local.")
+			return
+		ws_peer = existente
+		if multiplayer.is_server():
+			_iniciar_como_servidor(true)
+		else:
+			_on_connected_ok()
+		return
 
 	print("[ChunkManager/WS]   Rol EFECTIVO: ", "CLIENTE_REMOTO -> " + target_host if _is_explicit_client else ("SERVIDOR_LOCAL (WS 0.0.0.0:" + str(PUERTO_WS) + ")" if force_host else "AUTO (intentará unirse a un anfitrión local, fallback a servidor)"))
 	print("================================================================")
@@ -377,26 +398,30 @@ func _on_connected_ok():
 	else:
 		rpc_id(1, "_declarar_avatar", ruta_avatar)
 
-func _iniciar_como_servidor():
+func _iniciar_como_servidor(reutilizar: bool = false):
 	# El anfitrión sirve el mundo por WebSocket (TCP 8911). Este es el puerto que el
 	# Visor C# reenvía a través del túnel efímero (cloudflared/serveo/localhost.run),
 	# por lo que los clientes remotos SÍ pueden alcanzarlo. Si se usase ENet (UDP)
 	# como peer principal, los clientes del túnel nunca completarían el handshake.
 	print("[ChunkManager/WS] Creando Servidor WebSocket en puerto ", PUERTO_WS, "...")
-	ws_peer = WebSocketMultiplayerPeer.new()
-	var err := ws_peer.create_server(PUERTO_WS)
 	var modo_local := false
-	if err != OK:
-		# Puerto ocupado por un motor huérfano de una ejecución anterior: sin
-		# servidor no se registra ninguna isla y el avatar cae al vacío. Se
-		# arranca en modo local (OfflineMultiplayerPeer) para que la isla cargue
-		# igualmente; el P2P se recupera en el siguiente arranque limpio.
-		printerr("[ChunkManager/WS] ERROR al crear servidor WebSocket en ", PUERTO_WS, ": ", err,
-				". Se arranca en modo local sin red.")
-		multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
-		modo_local = true
+	if not reutilizar:
+		ws_peer = WebSocketMultiplayerPeer.new()
+		var err := ws_peer.create_server(_last_target_port)
+		if err != OK:
+			if Red.sesion_validada() or _is_explicit_client:
+				printerr("[ChunkManager/WS] ERROR al crear servidor WebSocket: ", err)
+				return
+			printerr("[ChunkManager/WS] ERROR al crear servidor WebSocket en ", _last_target_port, ": ", err,
+					". Se arranca en modo local sin red.")
+			multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
+			modo_local = true
+		else:
+			multiplayer.multiplayer_peer = ws_peer
 	else:
-		multiplayer.multiplayer_peer = ws_peer
+		# Peers que conectaron en el alta siguen siendo sondas hasta su claim real.
+		for id in multiplayer.get_peers():
+			_sondas[int(id)] = true
 
 	# Reservar mi propio avatar antes de registrar mi isla: mi_isla_lista se
 	# emite de inmediato y no debe entrar con una plaza sin asignar.
@@ -443,18 +468,10 @@ func _on_connected_fail():
 
 func _on_peer_connected(id):
 	if multiplayer.is_server():
-		# Enviar a este nuevo jugador las islas que ya existen (con su dueño)
-		for p_id in active_islands:
-			var idx := int(active_islands[p_id])
-			rpc_id(id, "_spawn_island_for_player", p_id, idx,
-					str(owner_names.get(p_id, "")), str(_uuid_por_isla.get(idx, "")))
 		# NO registrar de inmediato: esperar la reclamacion del cliente. Si es
 		# una reconexion (ya tenia isla), se adopta sin crear nada nuevo.
-		_adopt_or_register.bind(id).call_deferred()
-		# Roster: orden de llegada + dirección para poder reconectar tras migración.
-		_roster[id] = {"order": _next_order, "url": "", "ip": "", "nick": ""}
-		_next_order += 1
-		_broadcast_roster()
+		_sondas[id] = true
+		# El roster se incorpora únicamente al recibir el claim del mundo real.
 
 # El cliente anuncia el indice de su isla y su nick al conectarse
 # (-1 = jugador nuevo).
@@ -463,6 +480,18 @@ func _claim_island(idx: int, nick: String, uuid: String = "") -> void:
 	if not multiplayer.is_server():
 		return
 	var sender := multiplayer.get_remote_sender_id()
+	if sender <= 0 or active_islands.has(sender) or pending_claims.has(sender):
+		return
+	_sondas.erase(sender)
+	for p_id in active_islands:
+		var existente_idx := int(active_islands[p_id])
+		rpc_id(sender, "_spawn_island_for_player", p_id, existente_idx,
+			str(owner_names.get(p_id, "")), str(_uuid_por_isla.get(existente_idx, "")))
+	if not _roster.has(sender):
+		_roster[sender] = {"order": _next_order, "url": "", "ip": "", "nick": nick}
+		_next_order += 1
+	_broadcast_roster()
+	_adopt_or_register.bind(sender).call_deferred()
 	pending_claims[sender] = idx
 	pending_uuids[sender] = uuid if Identidad.uuid_valido(uuid) else ""
 	# Nombre único: si otro jugador ya usa ese nick, se sufija (#2, #3...).
@@ -488,7 +517,7 @@ func _sync_roster(data: Dictionary) -> void:
 
 func _broadcast_roster() -> void:
 	if multiplayer.is_server():
-		rpc("_sync_roster", _roster)
+		_difundir_mundo("_sync_roster", [_roster])
 
 # Tras el margen de reclamacion: adoptar isla existente o crear una nueva.
 func _adopt_or_register(id: int) -> void:
@@ -499,8 +528,9 @@ func _adopt_or_register(id: int) -> void:
 		pending_claims.erase(id)
 		pending_uuids.erase(id)
 		return # se fue durante el margen
+	if active_islands.has(id) or not pending_claims.has(id):
+		return
 	if _sondas.has(id):
-		_sondas.erase(id)
 		pending_claims.erase(id)
 		pending_uuids.erase(id)
 		return # solo consulto plazas, no entra al mundo
@@ -564,7 +594,7 @@ func _adoptar_isla(id: int, index: int, uuid: String) -> void:
 	_vincular_propietario(index, id, nick, uuid)
 	# call_local: también actualiza la copia del anfitrión. Si la isla ya estaba
 	# instanciada, el receptor solo refresca dueño y reactiva al jugador propio.
-	rpc("_spawn_island_for_player", id, index, nick, uuid)
+	_difundir_mundo("_spawn_island_for_player", [id, index, nick, uuid], true)
 	print("Reconexion reconocida: jugador ", id, " conserva isla ", index)
 
 
@@ -584,7 +614,7 @@ func _register_player(id: int, uuid: String = "", preferido: int = -1):
 	next_island_index = maxi(next_island_index, index + 1)
 	var nick := str(owner_names.get(id, ""))
 	_vincular_propietario(index, id, nick, uuid)
-	rpc("_spawn_island_for_player", id, index, nick, uuid)
+	_difundir_mundo("_spawn_island_for_player", [id, index, nick, uuid], true)
 
 
 func _indice_activo(index: int) -> bool:
@@ -679,7 +709,7 @@ func _procesar_registro_isla(sender: int, index: int, uuid: String) -> String:
 	var nick := str(owner_names.get(sender, _mi_nick))
 	_vincular_propietario(index, sender, nick, uuid)
 	if is_inside_tree():
-		rpc("_sync_island_owner", index, sender, nick, uuid)
+		_difundir_mundo("_sync_island_owner", [index, sender, nick, uuid])
 	return ""
 
 
@@ -720,7 +750,7 @@ func _on_peer_disconnected(id):
 		active_islands.erase(id)
 		if isla_saliente >= 0 and not _indice_activo(isla_saliente):
 			_drop_fake_key(isla_saliente)
-			rpc("_despawn_island", isla_saliente)
+			_difundir_mundo("_despawn_island", [isla_saliente], true)
 		# La plaza del jugador que se va queda libre para el siguiente.
 		_sondas.erase(id)
 		var liberadas := Turnos.liberar(_turnos, id)
@@ -863,6 +893,8 @@ func _promover_a_servidor() -> void:
 		for idx in active_islands.values():
 			covered[int(idx)] = true
 		for entry in tm2.get_islands():
+			if bool(entry.get("dao", false)):
+				continue
 			var hidx := int(entry["index"])
 			if hidx < 0:
 				continue # la isla DAO no es una plaza de jugador
@@ -1009,30 +1041,20 @@ func _centro_isla(index: int) -> Vector2:
 ## Instancia una sola vez la Isla Única LucIA en el origen. No usa índices ni
 ## RPC de islas de jugador: el script de la isla la protege con un grupo, así
 ## que aunque algo intentara cargarla de nuevo la copia se descarta sola.
-func _instanciar_isla_dao() -> void:
-	if _isla_dao != null and is_instance_valid(_isla_dao):
+## WoldVirtual3DP2P.tscn monta la única DAO como escena hermana del mundo.
+## Aquí solo se crea su agua, con el mismo bloque oceánico que acompaña a cada
+## isla personal; no se instancia una segunda copia de la sede.
+func _instanciar_oceano_dao() -> void:
+	if get_node_or_null("OceanoDAO") != null:
 		return
-	if not get_tree().get_nodes_in_group("isla_unica_lucia").is_empty():
+	var oceano_dao := original_ocean.duplicate() as Node3D
+	if oceano_dao == null:
 		return
-	if not ResourceLoader.exists(RUTA_ISLA_DAO):
-		push_warning("[DAO] Falta la escena de la Isla Única LucIA: " + RUTA_ISLA_DAO)
-		return
-	var escena: Resource = load(RUTA_ISLA_DAO)
-	if not (escena is PackedScene):
-		push_warning("[DAO] La escena de la Isla Única LucIA no es válida: " + RUTA_ISLA_DAO)
-		return
-	var nodo := (escena as PackedScene).instantiate() as Node3D
-	if nodo == null:
-		return
-	nodo.position = Vector3.ZERO
-	add_child(nodo)
-	_isla_dao = nodo
-	# La plantilla de océano está oculta; la DAO necesita su propio mar local.
-	var ocean_dao = original_ocean.duplicate()
-	ocean_dao.show()
-	add_child(ocean_dao)
-	ocean_dao.position = Vector3.ZERO
-	print("[DAO] Isla Única LucIA instanciada en el origen (0,0,0)")
+	oceano_dao.name = "OceanoDAO"
+	oceano_dao.position = Vector3.ZERO
+	oceano_dao.show()
+	add_child(oceano_dao)
+	print("[DAO] Agua de sede compartida en el origen (0,0,0)")
 
 
 ## Fija la isla propia, la persiste y coloca el avatar solo la primera vez.
@@ -1063,11 +1085,12 @@ func _colocar_avatar_en_isla(index: int) -> void:
 				and bool(cfg.get_value("posicion", "has_saved_pos", false))
 		# La posición solo vale para la misma isla: evita reaparecer en otra.
 		var idx_pos := int(cfg.get_value("posicion", "island_index", -1))
-		if has_pos and idx_pos == index:
-			var sx: float = float(cfg.get_value("posicion", "x", centro.x))
-			var sy: float = float(cfg.get_value("posicion", "y", 42.0))
-			var sz: float = float(cfg.get_value("posicion", "z", centro.y))
-			var srot: float = float(cfg.get_value("posicion", "rot_y", 0.0))
+		var sx: float = float(cfg.get_value("posicion", "x", centro.x))
+		var sy: float = float(cfg.get_value("posicion", "y", 42.0))
+		var sz: float = float(cfg.get_value("posicion", "z", centro.y))
+		var srot: float = float(cfg.get_value("posicion", "rot_y", 0.0))
+		var guardada_cerca_de_isla := Vector2(sx - centro.x, sz - centro.y).length() < chunk_size * 0.45
+		if has_pos and idx_pos == index and guardada_cerca_de_isla:
 			if sy > -5.0:
 				userbase.position = Vector3(sx, sy, sz)
 				userbase.rotation.y = srot

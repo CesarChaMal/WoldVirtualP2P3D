@@ -247,13 +247,25 @@ namespace Visor3D
         /// Termina motores Godot de ejecuciones anteriores que quedaron vivos al
         /// morir el visor. Si uno sigue escuchando en el 8911, el mundo nuevo no
         /// puede crear su servidor: no registra isla y el avatar cae al vacío.
-        /// Solo afecta al motor de este visor (mismo ejecutable, sin --editor).
+        /// Además mantiene bloqueado el .exe del runtime e impide re-extraerlo.
+        /// Solo afecta a motores de juego bajo el runtime de este visor (sin --editor).
         /// </summary>
-        private void TerminarMotoresHuerfanos()
+        public static int TerminarMotoresHuerfanos(string godotExePath)
         {
-            if (string.IsNullOrEmpty(_godotExePath)) return;
+            if (string.IsNullOrEmpty(godotExePath)) return 0;
 
-            string nombre = Path.GetFileName(_godotExePath);
+            string nombre = Path.GetFileName(godotExePath);
+            var raices = new List<string>
+            {
+                Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "WoldVirtualP2P3D", "runtime"),
+                Path.GetDirectoryName(AppExtractor.RuntimeDir) ?? ""
+            };
+            string? custom = Environment.GetEnvironmentVariable("WOLD_RUNTIME_DIR");
+            if (!string.IsNullOrWhiteSpace(custom))
+                raices.Add(Path.GetDirectoryName(Path.GetFullPath(custom)) ?? "");
+
             var huerfanos = new List<Process>();
             try
             {
@@ -264,9 +276,26 @@ namespace Visor3D
                 {
                     string exe = (mo["ExecutablePath"] as string) ?? "";
                     string cmd = (mo["CommandLine"] as string) ?? "";
-                    if (string.IsNullOrEmpty(exe) ||
-                        !string.Equals(Path.GetFullPath(exe), Path.GetFullPath(_godotExePath), StringComparison.OrdinalIgnoreCase))
-                        continue;
+                    if (string.IsNullOrEmpty(exe)) continue;
+
+                    string exeFull = Path.GetFullPath(exe);
+                    bool esNuestro = string.Equals(exeFull, Path.GetFullPath(godotExePath), StringComparison.OrdinalIgnoreCase);
+                    if (!esNuestro)
+                    {
+                        foreach (string raiz in raices)
+                        {
+                            if (string.IsNullOrEmpty(raiz)) continue;
+                            string raizSep = Path.GetFullPath(raiz).TrimEnd(Path.DirectorySeparatorChar)
+                                + Path.DirectorySeparatorChar;
+                            if (exeFull.StartsWith(raizSep, StringComparison.OrdinalIgnoreCase))
+                            {
+                                esNuestro = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!esNuestro) continue;
+
                     // El editor abierto a mano no se toca: solo el motor de juego.
                     if (cmd.Contains("--editor", StringComparison.OrdinalIgnoreCase))
                         continue;
@@ -275,6 +304,7 @@ namespace Visor3D
                         continue;
 
                     int pid = Convert.ToInt32(mo["ProcessId"]);
+                    if (pid == Environment.ProcessId) continue;
                     try
                     {
                         var proceso = Process.GetProcessById(pid);
@@ -292,7 +322,7 @@ namespace Visor3D
                 Debug.WriteLine($"[GodotHwndHost] Limpieza de motores huérfanos: {ex.Message}");
             }
 
-            if (huerfanos.Count == 0) return;
+            if (huerfanos.Count == 0) return 0;
 
             Console.WriteLine($"[GodotHwndHost] {huerfanos.Count} motor(es) huérfano(s) terminado(s) antes de arrancar.");
             Visor3D.Services.VisorLog.Info($"[GodotHwndHost] {huerfanos.Count} motor(es) huérfano(s) terminado(s) antes de arrancar.");
@@ -308,6 +338,7 @@ namespace Visor3D
             }
             // Dejar que el sistema libere los puertos del motor terminado (8911).
             Thread.Sleep(300);
+            return huerfanos.Count;
         }
 
         private void LaunchGodotAsync()
@@ -338,6 +369,11 @@ namespace Visor3D
                     }
                     if (!string.IsNullOrEmpty(_userArgs))
                         args += $" -- {_userArgs}";
+#if GODOT_SOURCE_PREVIEW
+                    // La vista previa usa Vulkan dentro del HWND hijo de WPF;
+                    // la compilación publicada conserva su configuración propia.
+                    if (!_editorMode) args = "--rendering-driver vulkan " + args;
+#endif
 
                     var psi = new ProcessStartInfo
                     {
@@ -346,6 +382,20 @@ namespace Visor3D
                         UseShellExecute  = false,
                         CreateNoWindow   = false
                     };
+
+                    bool esParcheDao = !_editorMode &&
+                        string.Equals(_mainPack, AppExtractor.DaoPatchPath, StringComparison.OrdinalIgnoreCase);
+                    // La build con mundo completo no toca la base 2.8.6; solo el modo delta la exige.
+                    bool baseDisponible = esParcheDao && DeltaPackManager.EnsureBasePackAvailable();
+                    if (esParcheDao && !baseDisponible)
+                    {
+                        Console.WriteLine("[GodotHwndHost] ERROR: falta la base original 2.8.6; se cancela el arranque del parche DAO.");
+                        return;
+                    }
+                    if (baseDisponible)
+                    {
+                        psi.Environment["WOLD_BASE_PCK"] = DeltaPackManager.BasePckPath;
+                    }
 
                     if (_editorMode)
                     {
@@ -358,6 +408,14 @@ namespace Visor3D
                         Directory.CreateDirectory(Path.Combine(cache, "Godot"));
                         psi.Environment["LOCALAPPDATA"] = cache;
                     }
+#if GODOT_SOURCE_PREVIEW
+                    // El proceso Godot de la vista previa usa un user:// aislado
+                    // y escribible; así no consume flags ni migra datos reales.
+                    string previewData = Path.Combine(
+                        AppContext.BaseDirectory, "preview_userdata");
+                    Directory.CreateDirectory(Path.Combine(previewData, "Godot", "app_userdata"));
+                    psi.Environment["APPDATA"] = previewData;
+#endif
 
                     Console.WriteLine($"[GodotHwndHost] Lanzando proceso Godot: {_godotExePath}");
                     Console.WriteLine($"[GodotHwndHost] Mundo: {(_mainPack ?? _projectPath)}");
@@ -366,7 +424,7 @@ namespace Visor3D
                     Debug.WriteLine($"[GodotHwndHost] Lanzando proceso Godot: {_godotExePath} {args}");
 
                     // Un motor de una ejecución anterior no debe seguir ocupando el 8911.
-                    TerminarMotoresHuerfanos();
+                    TerminarMotoresHuerfanos(_godotExePath ?? "");
 
                     _godotProcess = Process.Start(psi);
                     if (_godotProcess == null)
@@ -407,6 +465,7 @@ namespace Visor3D
                     if (hwnd == IntPtr.Zero || token.IsCancellationRequested) return;
 
                     _childHwnd = hwnd;
+                    Console.WriteLine($"[GodotHwndHost] Ventana de Godot detectada (PID={_godotProcess.Id}, HWND=0x{hwnd.ToInt64():X}).");
 
                     // Volver al hilo UI para embeber
                     Application.Current.Dispatcher.Invoke(() =>
@@ -455,7 +514,10 @@ namespace Visor3D
             }
 
             // Reparentar
-            SetParent(_childHwnd, _hostHwnd);
+            Marshal.SetLastPInvokeError(0);
+            IntPtr parentAnterior = SetParent(_childHwnd, _hostHwnd);
+            int errorParent = Marshal.GetLastPInvokeError();
+            Console.WriteLine($"[GodotHwndHost] SetParent HWND=0x{_childHwnd.ToInt64():X} -> 0x{_hostHwnd.ToInt64():X}; anterior=0x{parentAnterior.ToInt64():X}, error={errorParent}.");
 
             // Quitar decoraciones
             int style = GetWindowLong(_childHwnd, GWL_STYLE);

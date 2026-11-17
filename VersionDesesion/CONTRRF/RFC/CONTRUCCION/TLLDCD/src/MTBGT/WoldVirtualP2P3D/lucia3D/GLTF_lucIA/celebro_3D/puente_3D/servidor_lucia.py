@@ -31,6 +31,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 for _ancestro in Path(__file__).resolve().parents:

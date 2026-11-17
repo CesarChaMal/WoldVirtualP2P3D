@@ -166,7 +166,9 @@ namespace Visor3D.Seguridad
             bool hayLlave = File.Exists(llave);
             bool haySello = File.Exists(sello);
 
-            if (TieneCuentaOficial)
+            if (string.Equals(Path.GetFullPath(raiz).TrimEnd(Path.DirectorySeparatorChar),
+                              Path.GetFullPath(BaseDir).TrimEnd(Path.DirectorySeparatorChar),
+                              StringComparison.OrdinalIgnoreCase) && TieneCuentaOficial)
             {
                 var cuenta = ObtenerCuentaOficial();
                 motivo = $"cuenta oficial por bloque inmutable ({cuenta.Nick})";
