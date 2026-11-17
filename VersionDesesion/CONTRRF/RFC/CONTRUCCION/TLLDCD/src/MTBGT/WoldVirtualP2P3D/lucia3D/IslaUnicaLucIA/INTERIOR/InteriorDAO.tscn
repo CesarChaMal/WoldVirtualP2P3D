@@ -40,7 +40,7 @@ shape = SubResource("BoxShapeBaranda")
 transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 0, 0, 0)
 
 [node name="ColisionRampa" type="StaticBody3D" parent="RampaEste"]
-transform = Transform3D(1, 0, 0, 0, 0.9578263, -0.28734788, 0, 0.28734788, 0.9578263, 0, 40.75, 33.45)
+transform = Transform3D(1, 0, 0, 0, 0.9696131, -0.24464286, 0, 0.24464286, 0.9696131, 0, 40.869558, 33.45)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="RampaEste/ColisionRampa"]
 shape = SubResource("BoxShapeRampa")
@@ -48,11 +48,11 @@ shape = SubResource("BoxShapeRampa")
 [node name="ColisionBarandas" type="StaticBody3D" parent="RampaEste"]
 
 [node name="BarandaIzq" type="CollisionShape3D" parent="RampaEste/ColisionBarandas"]
-transform = Transform3D(1, 0, 0, 0, 0.9578263, -0.28734788, 0, 0.28734788, 0.9578263, -3.45, 41.05, 33.45)
+transform = Transform3D(1, 0, 0, 0, 0.9696131, -0.24464286, 0, 0.24464286, 0.9696131, -3.45, 41.169558, 33.45)
 shape = SubResource("BoxShapeBaranda")
 
 [node name="BarandaDer" type="CollisionShape3D" parent="RampaEste/ColisionBarandas"]
-transform = Transform3D(1, 0, 0, 0, 0.9578263, -0.28734788, 0, 0.28734788, 0.9578263, 3.45, 41.05, 33.45)
+transform = Transform3D(1, 0, 0, 0, 0.9696131, -0.24464286, 0, 0.24464286, 0.9696131, 3.45, 41.169558, 33.45)
 shape = SubResource("BoxShapeBaranda")
 
 [node name="RampaNorte" type="Node3D" parent="."]
@@ -78,7 +78,7 @@ shape = SubResource("BoxShapeBaranda")
 transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, 0, 0, 0)
 
 [node name="ColisionRampa" type="StaticBody3D" parent="RampaOeste"]
-transform = Transform3D(1, 0, 0, 0, 0.9578263, -0.28734788, 0, 0.28734788, 0.9578263, 0, 40.75, 33.45)
+transform = Transform3D(1, 0, 0, 0, 0.9956792, -0.09285714, 0, 0.09285714, 0.9956792, 0, 41.290648, 33.45)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="RampaOeste/ColisionRampa"]
 shape = SubResource("BoxShapeRampa")
@@ -86,11 +86,11 @@ shape = SubResource("BoxShapeRampa")
 [node name="ColisionBarandas" type="StaticBody3D" parent="RampaOeste"]
 
 [node name="BarandaIzq" type="CollisionShape3D" parent="RampaOeste/ColisionBarandas"]
-transform = Transform3D(1, 0, 0, 0, 0.9578263, -0.28734788, 0, 0.28734788, 0.9578263, -3.45, 41.05, 33.45)
+transform = Transform3D(1, 0, 0, 0, 0.9956792, -0.09285714, 0, 0.09285714, 0.9956792, -3.45, 41.590648, 33.45)
 shape = SubResource("BoxShapeBaranda")
 
 [node name="BarandaDer" type="CollisionShape3D" parent="RampaOeste/ColisionBarandas"]
-transform = Transform3D(1, 0, 0, 0, 0.9578263, -0.28734788, 0, 0.28734788, 0.9578263, 3.45, 41.05, 33.45)
+transform = Transform3D(1, 0, 0, 0, 0.9956792, -0.09285714, 0, 0.09285714, 0.9956792, 3.45, 41.590648, 33.45)
 shape = SubResource("BoxShapeBaranda")
 
 [node name="ColisionRampaDais" type="StaticBody3D" parent="."]

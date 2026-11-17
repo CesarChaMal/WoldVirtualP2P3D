@@ -212,18 +212,27 @@ func _validar_interior() -> void:
 			"y=%.2f" % suelo_terraza)
 
 	# Las cuatro rampas y la del estrado declaran su collision shape en la escena
-	# y deben ser transitables con un rayo desde arriba.
+	# y deben ser transitables con un rayo desde arriba. La boca de Este y Oeste
+	# vive a distinta altura porque el terreno sube distinto en cada eje.
+	var perfil_y := {
+		"RampaSur": [40.75, 41.05],
+		"RampaEste": [40.869558, 41.169558],
+		"RampaNorte": [40.75, 41.05],
+		"RampaOeste": [41.290648, 41.590648],
+	}
 	for nombre_rampa in ["RampaSur", "RampaEste", "RampaNorte", "RampaOeste"]:
 		var rampa := interior.get_node_or_null(nombre_rampa) as Node3D
 		if rampa == null:
 			_check(false, "rampa %s en la escena" % nombre_rampa)
 			continue
+		var y_rampa: float = perfil_y[nombre_rampa][0]
+		var y_baranda: float = perfil_y[nombre_rampa][1]
 		var forma := _forma_de(rampa, "ColisionRampa")
 		_check(forma != null and forma.shape is BoxShape3D,
 				"colisión de la rampa %s en la escena" % nombre_rampa)
 		if forma == null:
 			continue
-		var centro := rampa.global_transform * Vector3(0.0, 40.75, 33.45)
+		var centro := rampa.global_transform * Vector3(0.0, y_rampa, 33.45)
 		var suelo := _rayo_suelo(centro + Vector3(0.0, 4.0, 0.0), 30.0)
 		_check(absf(suelo - (centro.y + 0.15)) < 0.35,
 				"rampa %s transitable" % nombre_rampa, "y=%.2f" % suelo)
@@ -236,7 +245,7 @@ func _validar_interior() -> void:
 		var der: CollisionShape3D = barandas.get_node_or_null("BarandaDer") if barandas != null else null
 		_check(izq != null and izq.shape is BoxShape3D and der != null and der.shape is BoxShape3D,
 				"barandas de la rampa %s con colisión" % nombre_rampa)
-		var rail := rampa.global_transform * Vector3(3.45, 41.05, 33.45)
+		var rail := rampa.global_transform * Vector3(3.45, y_baranda, 33.45)
 		var rail_y := _rayo_suelo(rail + Vector3(0.0, 4.0, 0.0), 30.0)
 		_check(absf(rail_y - (rail.y + 0.13)) < 0.35,
 				"baranda %s frena" % nombre_rampa, "y=%.2f" % rail_y)

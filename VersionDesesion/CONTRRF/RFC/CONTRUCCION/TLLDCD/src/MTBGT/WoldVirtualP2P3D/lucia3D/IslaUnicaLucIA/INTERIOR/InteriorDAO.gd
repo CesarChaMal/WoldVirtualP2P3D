@@ -174,7 +174,15 @@ func _construir_terrazas() -> void:
 	# terraza de la DAO (40,2 -> 41,7) atravesando los accesos de la cúpula.
 	var metal := _mat(COLOR_ACERO_CLARO, 0.42, 0.45)
 	var oro := _mat(COLOR_ORO, 0.3, 0.85, COLOR_ORO, 0.5)
-	var inclinacion := atan2(1.5, 5.0)
+	# El terreno sube distinto en cada punto cardinal: la rampa de Este arranca
+	# en 40,33 y la de Oeste en 41,18. Cada perfil ajusta su pendiente para que
+	# el borde alto siga a ras de la terraza y la boca no quede enterrada.
+	var perfiles := [
+		{"inclinacion": atan2(1.5, 5.0), "y": 40.75, "baranda": 41.05},
+		{"inclinacion": asin(1.37 / 5.6), "y": 40.869558, "baranda": 41.169558},
+		{"inclinacion": atan2(1.5, 5.0), "y": 40.75, "baranda": 41.05},
+		{"inclinacion": asin(0.52 / 5.6), "y": 41.290648, "baranda": 41.590648},
+	]
 	for i in 4:
 		# Las colisiones viven en la escena; el constructor sólo añade lo visual.
 		var nombre_rampa: String = ["RampaSur", "RampaEste", "RampaNorte", "RampaOeste"][i]
@@ -184,17 +192,20 @@ func _construir_terrazas() -> void:
 			nodo.name = nombre_rampa
 			nodo.rotation.y = [0.0, -PI * 0.5, PI, PI * 0.5][i]
 			add_child(nodo)
+		var inclinacion: float = perfiles[i]["inclinacion"]
+		var y_rampa: float = perfiles[i]["y"]
+		var y_baranda: float = perfiles[i]["baranda"]
 		# El borde alto queda a ras del suelo del atrio: sin escalón, se sale
 		# caminando de la terraza por las cuatro rampas.
-		_caja("Superficie", Vector3(7.2, 0.3, 5.6), Vector3(0.0, 40.75, 33.45), metal,
+		_caja("Superficie", Vector3(7.2, 0.3, 5.6), Vector3(0.0, y_rampa, 33.45), metal,
 				Vector3(inclinacion, 0.0, 0.0), nodo)
 		if nodo.get_node_or_null("ColisionRampa") == null:
 			var forma := BoxShape3D.new()
 			forma.size = Vector3(7.2, 0.3, 5.6)
-			_colision("ColisionRampa", forma, Vector3(0.0, 40.75, 33.45),
+			_colision("ColisionRampa", forma, Vector3(0.0, y_rampa, 33.45),
 					Vector3(inclinacion, 0.0, 0.0), nodo)
 		for lado in [-3.45, 3.45]:
-			_caja("Baranda", Vector3(0.18, 0.26, 5.6), Vector3(lado, 41.05, 33.45), oro,
+			_caja("Baranda", Vector3(0.18, 0.26, 5.6), Vector3(lado, y_baranda, 33.45), oro,
 					Vector3(inclinacion, 0.0, 0.0), nodo)
 		if nodo.get_node_or_null("ColisionBarandas") == null:
 			# La baranda visual también frena: ningún borde de rampa queda abierto.
@@ -207,7 +218,7 @@ func _construir_terrazas() -> void:
 				var baranda := CollisionShape3D.new()
 				baranda.name = "BarandaIzq" if lado < 0.0 else "BarandaDer"
 				baranda.shape = forma_baranda
-				baranda.position = Vector3(lado, 41.05, 33.45)
+				baranda.position = Vector3(lado, y_baranda, 33.45)
 				baranda.rotation.x = inclinacion
 				barandas.add_child(baranda)
 
@@ -219,6 +230,12 @@ func _construir_terrazas() -> void:
 		if i % 8 == 0:
 			continue
 		var centro := Vector3(sin(ang), 0.0, cos(ang)) * 30.4
+		# Los dos tramos que flanquean cada boca se corren hacia fuera: la rampa
+		# mide 7,2 m y el hueco de un solo tramo sólo deja 5,97 m.
+		var resto := i % 8
+		if resto == 1 or resto == 7:
+			var tangente := Vector3(cos(ang), 0.0, -sin(ang))
+			centro += tangente * (0.55 if resto == 1 else -0.55)
 		_caja("Petril_%d" % i, Vector3(5.4, 0.9, 0.45),
 				Vector3(centro.x, SUELO_Y + 0.45, centro.z), petril, Vector3(0.0, ang, 0.0))
 		_caja("RematePetril_%d" % i, Vector3(5.4, 0.1, 0.55),

@@ -169,6 +169,10 @@
     <EmbeddedResource Include="$(DaoPatchPath)"
                       Condition="'$(DaoPatchPath)' != '' and Exists('$(DaoPatchPath)')"
                       LogicalName="Visor3D.dao_patch.pck" />
+    <!-- Mundo completo de 2.8.7: la build es autónoma y no depende de la base 2.8.6. -->
+    <EmbeddedResource Include="$(MundoPckPath)"
+                      Condition="'$(MundoPckPath)' != '' and Exists('$(MundoPckPath)')"
+                      LogicalName="Visor3D.wvp3d.pck" />
   </ItemGroup>
 
 </Project>

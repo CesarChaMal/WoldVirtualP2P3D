@@ -21,6 +21,7 @@ const RUTA_DAO := "res://lucia3D/IslaUnicaLucIA/ESCENAS/IslaUnicaLucIA.tscn"
 const RUTA_MUNDO := "res://WoldVirtual3DP2P.tscn"
 const RUTA_BLOQUE := "res://ESCENAS/sceneOPTM/constructor/chunk3DBLOCK/ISLA3Dblock.tscn"
 const EDITOR_SCENE: PackedScene = preload("res://avatares/EditorAspecto.tscn")
+const VozLucIA = preload("res://lucia3D/IslaUnicaLucIA/ONBOARDING/VozLucIA.gd")
 const Catalogo = preload("res://avatares/CatalogoAvatares.gd")
 const Identidad = preload("res://gdscrip/Identidad.gd")
 
@@ -39,6 +40,12 @@ var _carrusel: Node = null
 var _portal: Node = null
 var _zona: Node3D = null
 var _jugador: Node3D = null
+var _lucia: Node3D = null
+var _lucia_anclaje: Node3D = null
+var _lucia_sigue := false
+## Cuerpos que el rayo de suelo de LucIA no debe pisar: la malla de la isla
+## (su cúpula tiene colisión trimesh) y su propia cápsula estática del despacho.
+var _exclusiones_suelo: Array[RID] = []
 var _editor: Node3D = null
 var _avatar_id := ""
 var _cruzando := false
@@ -68,6 +75,20 @@ var _paso_label: Label = null
 var _pista_label: Label = null
 var _tween_dialogo: Tween = null
 
+# Voz de LucIA: TTS nativo del sistema (DisplayServer), sin dependencias extra.
+# En headless no hay voces y todo queda en subtítulo, así que las pruebas
+# automáticas no necesitan audio.
+var _voz_id := ""
+var _voz_activa := false
+var _voz_buscada := false
+var _voz_oficial: Node = null
+## Fin estimado de la locución nativa. `tts_is_speaking()` aborta el motor
+## WinRT en este Godot 4.7.2, así que el fin se calcula al lanzar la frase.
+var _voz_fin_ms := 0
+## Solo se detiene el TTS nativo si alguna frase llegó a usarlo: tocar WinRT
+## sin necesidad aborta el motor en equipos sin salida de audio.
+var _tts_usado := false
+
 
 func set_nick(nick: String) -> void:
 	_nick = nick.strip_edges()
@@ -92,6 +113,10 @@ func _ready() -> void:
 		_carrusel = _interior.call("carrusel")
 		_portal = _interior.call("portal")
 		_zona = _interior.call("zona_personalizacion")
+		_lucia = _interior.call("lucia") if _interior.has_method("lucia") else null
+		if _lucia != null:
+			_lucia_anclaje = _lucia.get_parent() as Node3D
+	_preparar_exclusiones_suelo()
 	if _carrusel != null:
 		if _carrusel.has_method("set_nick"):
 			_carrusel.call("set_nick", _nick)
@@ -107,6 +132,11 @@ func _ready() -> void:
 	_crear_jugador()
 	_crear_camara()
 	_construir_hud()
+	_voz_oficial = VozLucIA.new()
+	_voz_oficial.name = "VozLucIA"
+	add_child(_voz_oficial)
+	# La voz nativa se busca solo si falta el WAV oficial: enumerar las voces
+	# WinRT al arrancar puede abortar el motor en equipos sin audio.
 	if _portal != null and _portal.has_signal("portal_cruzado"):
 		_portal.connect("portal_cruzado", _al_cruzar_portal)
 	_secuencia()
@@ -155,6 +185,13 @@ func _mar() -> void:
 
 
 func _montar_dao() -> void:
+	# La escena principal (WoldVirtual3DP2P) ya trae la sede como hermana del
+	# mundo. Instanciar otra la descartaría por duplicada y el alta se quedaría
+	# sin DAO; se reutiliza la que ya está viva.
+	var existente := get_tree().get_first_node_in_group("isla_unica_lucia") as Node3D
+	if existente != null:
+		_dao = existente
+		return
 	var recurso: Resource = load(RUTA_DAO)
 	if not (recurso is PackedScene):
 		push_error("[OnboardingDAO] no carga " + RUTA_DAO)
@@ -178,6 +215,9 @@ func _crear_jugador() -> void:
 	nodo.name = "Jugador"
 	nodo.set("es_selector", true)
 	nodo.position = OFICINA_SPAWN
+	# Aún no hay avatar elegido: el arranque es de LucIA y el avatar se muestra
+	# al confirmarse en el carrusel.
+	nodo.visible = false
 	add_child(nodo)
 	# El avatar mira hacia su +Z local: se encara al despacho, no con look_at.
 	nodo.rotation.y = atan2(0.0 - OFICINA_SPAWN.x, -0.6 - OFICINA_SPAWN.z)
@@ -305,6 +345,103 @@ func _decir(nombre: String, texto: String, segundos := 4.0) -> void:
 	_tween_dialogo.tween_callback(func(): _dialogo.visible = false)
 
 
+# ---------------------------------------------------------------------------
+# Voz de LucIA
+# ---------------------------------------------------------------------------
+
+func _preparar_voz() -> void:
+	_voz_buscada = true
+	if not DisplayServer.has_method("tts_get_voices"):
+		return
+	var voces: Array = DisplayServer.tts_get_voices()
+	# La voz oficial del sistema general (voz_lucia.py) es Laura. Godot expone
+	# las mismas OneCore; se elige en ese orden y nunca la primera que aparezca,
+	# que en este equipo es Pablo (masculina).
+	for preferida in ["laura", "helena", "elvira", "sabina", "pablo"]:
+		for voz in voces:
+			if not str(voz.get("language", "")).begins_with("es"):
+				continue
+			if preferida in str(voz.get("name", "")).to_lower():
+				_voz_id = str(voz.get("id", ""))
+				break
+		if not _voz_id.is_empty():
+			break
+	if _voz_id.is_empty():
+		for voz in voces:
+			if str(voz.get("language", "")).begins_with("es"):
+				_voz_id = str(voz.get("id", ""))
+				break
+	_voz_activa = not _voz_id.is_empty()
+
+
+## LucIA habla en segundo plano: subtítulo y voz a la vez.
+func _lucia_dice(texto: String, segundos := 0.0) -> void:
+	if segundos <= 0.0:
+		segundos = clampf(2.5 + float(texto.length()) / 16.0, 3.5, 9.0)
+	_decir("LucIA", texto, segundos)
+	_voz(texto)
+
+
+## Voz oficial de LucIA si ya está sintetizada; si no, voz nativa al momento
+## mientras el sintetizador oficial deja el WAV en caché.
+func _voz(texto: String) -> void:
+	if _voz_oficial != null and bool(_voz_oficial.call("decir", texto)):
+		# La voz nativa de una línea anterior no debe seguir sonando sobre la oficial.
+		_voz_fin_ms = 0
+		if _tts_usado and DisplayServer.has_method("tts_stop"):
+			DisplayServer.tts_stop()
+			_tts_usado = false
+		return
+	_hablar(texto)
+
+
+func _hablar(texto: String) -> void:
+	if texto.strip_edges().is_empty():
+		return
+	if _voz_oficial != null:
+		_voz_oficial.call("callar")
+	if not _voz_activa and not _voz_buscada:
+		_preparar_voz()
+	if not _voz_activa:
+		return
+	# Ritmo 1.16x y volumen de acompañamiento: el mismo carácter que la voz
+	# oficial del sistema general, sin tapar el ambiente de la DAO.
+	DisplayServer.tts_speak(texto, _voz_id, 70.0, 1.06, 1.16, 0, true)
+	_tts_usado = true
+	var palabras := texto.split(" ", false).size()
+	_voz_fin_ms = Time.get_ticks_msec() + int(
+			clampf(0.6 + float(palabras) / 3.0, 1.2, 25.0) * 1000.0)
+
+
+func _callar() -> void:
+	_voz_fin_ms = 0
+	if _voz_oficial != null:
+		_voz_oficial.call("callar")
+	if _tts_usado and DisplayServer.has_method("tts_stop"):
+		DisplayServer.tts_stop()
+	_tts_usado = false
+
+
+## True mientras LucIA sigue pronunciando la línea actual, sea el WAV oficial
+## o la voz nativa del sistema.
+func _voz_sonando() -> bool:
+	if _voz_oficial != null and bool(_voz_oficial.call("esta_hablando")):
+		return true
+	return _voz_fin_ms > Time.get_ticks_msec()
+
+
+## Espera a que la línea actual termine. El tope evita bloquear el alta si el
+## backend de voz no confirma el final (driver sin audio, TTS colgado).
+func _esperar_voz(maximo := 20.0) -> void:
+	var limite := Time.get_ticks_msec() + int(maximo * 1000.0)
+	while _voz_sonando() and Time.get_ticks_msec() < limite:
+		await get_tree().process_frame
+
+
+func _exit_tree() -> void:
+	_callar()
+
+
 func _paso(texto: String) -> void:
 	if _paso_label != null:
 		_paso_label.text = texto
@@ -329,6 +466,22 @@ func _esperar(seg: float) -> void:
 # ---------------------------------------------------------------------------
 
 func _process(delta: float) -> void:
+	# La ancla de LucIA fija su altura; al acompañar al avatar debe pisar el
+	# atrio y la rampa igual que él, no quedarse flotando a la altura del dais.
+	if _lucia_sigue and _lucia != null and _lucia_anclaje != null:
+		var p := _lucia.global_position
+		var espacio := get_world_3d().direct_space_state
+		if espacio != null:
+			var rayo := PhysicsRayQueryParameters3D.create(
+					Vector3(p.x, p.y + 2.0, p.z), Vector3(p.x, p.y - 3.0, p.z))
+			var exclusiones := _exclusiones_suelo.duplicate()
+			if _jugador is CollisionObject3D:
+				exclusiones.append((_jugador as CollisionObject3D).get_rid())
+			rayo.exclude = exclusiones
+			var golpe := espacio.intersect_ray(rayo)
+			if not golpe.is_empty():
+				_lucia_anclaje.global_position.y = float(golpe["position"].y)
+
 	if _camara == null or _cam_pos == null or _cam_meta == null:
 		return
 	if _seguir and _jugador != null:
@@ -379,7 +532,7 @@ func _orientar(hacia: Vector3) -> void:
 	_jugador.rotation = Vector3(0.0, atan2(delta.x, delta.z), 0.0)
 
 
-func _caminar(puntos: Array, velocidad := 2.2, seguir := true) -> void:
+func _caminar(puntos: Array, velocidad := 2.2, seguir := true, lateral := 1.35) -> void:
 	if _jugador == null:
 		return
 	_seguir = seguir
@@ -388,16 +541,35 @@ func _caminar(puntos: Array, velocidad := 2.2, seguir := true) -> void:
 		var hasta: Vector3 = puntos[i]
 		var desde := _jugador.global_position
 		var plano := Vector3(hasta.x - desde.x, 0.0, hasta.z - desde.z)
+		var lado := Vector3.RIGHT
 		if plano.length() > 0.2:
 			var dir := plano.normalized()
-			var lado := dir.cross(Vector3.UP).normalized()
+			lado = dir.cross(Vector3.UP).normalized()
 			_offset_seguir = -dir * 4.6 + lado * 1.8 + Vector3(0.0, 2.05, 0.0)
 		_orientar(hasta)
+		if _lucia_sigue:
+			_lucia_caminar(hasta + lado * lateral, velocidad)
 		var dur := maxf(desde.distance_to(hasta) / maxf(velocidad, 0.1), 0.18)
 		var tw := create_tween()
 		tw.tween_property(_jugador, "global_position", hasta, dur).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 		await tw.finished
 	_jugador.call("reproducir_animacion", Catalogo.ANIM_IDLE, true)
+
+
+## LucIA recorre el mismo tramo que el avatar, un paso por delante y a su lado.
+func _lucia_caminar(punto_global: Vector3, velocidad: float) -> void:
+	if _lucia == null or _lucia_anclaje == null:
+		return
+	_lucia.call("fijar_velocidad_andar", velocidad + 0.25)
+	_lucia.call("caminar_hasta", _lucia_anclaje.to_local(punto_global))
+
+
+func _lucia_a(punto_global: Vector3) -> void:
+	if _lucia == null or _lucia_anclaje == null:
+		return
+	_lucia_anclaje.global_position.y = punto_global.y
+	_lucia.call("teleportar", _lucia_anclaje.to_local(punto_global))
+	_columna(punto_global)
 
 
 func _punto(x: float, z: float, esperado: float) -> Vector3:
@@ -416,6 +588,27 @@ func _suelo(x: float, z: float, esperado: float) -> float:
 	if golpe.is_empty():
 		return esperado
 	return float((golpe["position"] as Vector3).y)
+
+
+## La cúpula del GLB de la isla lleva colisión trimesh. El rayo de suelo de
+## LucIA la tomaba por un piso y la subía por su cara interna hasta el techo,
+## así que se descarta la malla de la isla y su cápsula estática del despacho.
+## El avatar del jugador se añade aparte en cada consulta (cambia al elegirlo).
+func _preparar_exclusiones_suelo() -> void:
+	_exclusiones_suelo.clear()
+	if _dao != null:
+		_recoger_cuerpos(_dao.get_node_or_null("MallaIsla"))
+	if _interior != null:
+		_recoger_cuerpos(_interior.get_node_or_null("ColisionLucIA"))
+
+
+func _recoger_cuerpos(nodo: Node) -> void:
+	if nodo == null:
+		return
+	if nodo is CollisionObject3D:
+		_exclusiones_suelo.append((nodo as CollisionObject3D).get_rid())
+	for hijo in nodo.get_children():
+		_recoger_cuerpos(hijo)
 
 
 func _desplazar(destino: Vector3, mirar := Vector3.ZERO) -> void:
@@ -473,7 +666,7 @@ func _columna(pos: Vector3, dur := 0.9) -> void:
 func _secuencia() -> void:
 	_marcar(&"despacho")
 	_paso("1 · El despacho de LucIA")
-	_encuadrar(Vector3(6.4, 44.7, 10.8), Vector3(-0.4, 42.9, 0.8), 46.0)
+	_encuadrar(Vector3(2.4, 43.4, 3.6), Vector3(0.0, 42.95, -0.6), 36.0)
 
 	# Si no hay nick, recuperar o pedir uno por defecto
 	if _nick.is_empty():
@@ -487,23 +680,35 @@ func _secuencia() -> void:
 			_nick = "CiudadanoDAO"
 
 	var saludo_lucia := "Bienvenido a la Sede de la DAO, %s. Aquí tu cuenta nace como un bloque criptográfico." % _nick
-	_decir("LucIA", saludo_lucia, 5.5)
+	_lucia_dice(saludo_lucia, 5.5)
 	await _esperar(2.6)
-	_tomar_camara(Vector3(3.2, 43.6, 8.8), Vector3(0.0, 42.7, 2.6), 2.0)
-	_decir("LucIA", "Para garantizar la seguridad total del usuario, la cuenta se fortalece con 4 bloques adicionales en la plaza.", 5.0)
-	await _esperar(1.8)
+	_tomar_camara(Vector3(1.7, 43.35, 2.9), Vector3(0.0, 43.0, -0.6), 2.0, 34.0)
+	# Cada frase termina antes de empezar la siguiente: nada de cortes a medias.
+	await _esperar_voz()
+	_lucia_dice("Para garantizar la seguridad total del usuario, la cuenta se fortalece con 4 bloques adicionales en la plaza.", 5.0)
+	await _esperar_voz()
 
-	_paso("2 · La plaza de registro")
+	_lucia_dice("Antes de recorrer la sede, elige tu avatar: será tu identidad aquí.", 4.0)
+	await _esperar_voz()
+
+	await _carrusel_avatares()
+	if _cruzando:
+		return
+
+	_paso("3 · La plaza de registro")
 	_marcar(&"salida")
-	_decir("LucIA", "Sígueme. Bajamos por la rampa sur; el portal queda para el final.", 4.5)
+	# El avatar ya está elegido: LucIA baja del estrado y lo acompaña por la DAO.
+	_lucia_sigue = true
+	_lucia_a(_jugador.global_position + Vector3(1.4, 0.0, 0.0))
+	_lucia_dice("Ese avatar es tu aspecto en el metaverso. Sígueme: bajamos por la rampa sur; el portal queda para el final.", 4.5)
 	_seguir = true
 	await _caminar([
 		_jugador.global_position,
-		_punto(0.0, 6.6, ALTO_DAIS),
-		_punto(0.0, 8.8, SUELO_ATRIO),
-		_punto(0.0, 13.4, SUELO_ATRIO),
+		_punto(13.0, 15.9, SUELO_ATRIO),
+		_punto(9.6, 16.4, SUELO_ATRIO),
+		_punto(5.0, 17.2, SUELO_ATRIO),
 		_punto(0.0, 20.4, SUELO_ATRIO),
-	], 2.5)
+	], 2.2)
 	if _cruzando:
 		return
 	_encuadrar(Vector3(17.0, 46.4, 27.0), Vector3(0.0, 41.4, 20.0), 48.0)
@@ -513,16 +718,15 @@ func _secuencia() -> void:
 		_punto(0.0, 27.6, SUELO_ATRIO),
 		_punto(0.0, 30.9, SUELO_ATRIO),
 		_punto(0.0, 36.1, 40.2),
-	], 2.5)
+	], 2.2)
 	if _cruzando:
 		return
 	_encuadrar(Vector3(10.6, 44.6, 44.6), Vector3(0.0, 40.8, 33.6), 44.0)
 	await _esperar(1.0)
-	_decir("DAO", "La DAO reparte el alta en cuatro estaciones. Empecemos por la identidad, al norte.", 4.5)
-	await _esperar(1.4)
+	_lucia_dice("La DAO reparte el alta en cuatro estaciones. Empecemos por la identidad, al norte.", 4.5)
+	await _esperar_voz()
 
 	await _registro_estaciones()
-	await _carrusel_avatares()
 	await _bienvenida_metaverso()
 	await _caminar_al_espejo()
 	_abrir_editor()
@@ -533,25 +737,29 @@ func _registro_estaciones() -> void:
 		return
 	var estaciones := [
 		{"clave": &"identidad", "nombre": "Identidad", "bloque": 1,
-			"llegada": Vector3(0.0, 40.2, -30.6), "puesto": Vector3(0.0, 40.2, -34.4),
+			"llegada": Vector3(0.0, 41.6, -32.2), "puesto": Vector3(0.0, 41.6, -34.4),
 			"cam": [Vector3(6.2, 43.9, -26.0), Vector3(0.0, 41.2, -35.2)],
 			"texto": "Identidad: tu cuenta queda ligada a esta isla y no se repite en el archipiélago.",
-			"detalle": "Mina el Bloque #1: Crea el anclaje criptográfico de tu identidad única en la blockchain de la DAO."},
+			"detalle": "Mina el Bloque #1: Crea el anclaje criptográfico de tu identidad única en la blockchain de la DAO.",
+			"garantia": "Nadie puede crear una segunda identidad con tu nombre ni copiar la tuya: el anclaje es único en todo el archipiélago."},
 		{"clave": &"cuenta_unica", "nombre": "Cuenta única", "bloque": 2,
-			"llegada": Vector3(30.4, 41.25, 0.0), "puesto": Vector3(34.4, 41.25, 0.0),
+			"llegada": Vector3(32.2, 41.6, 0.0), "puesto": Vector3(34.4, 41.6, 0.0),
 			"cam": [Vector3(29.2, 44.9, 7.6), Vector3(34.4, 42.2, 0.0)],
 			"texto": "Cuenta única: una sola cuenta por persona, firmada por la DAO.",
-			"detalle": "Mina el Bloque #2: Vinculación de cuenta personal con firma simétrica inmutable."},
+			"detalle": "Mina el Bloque #2: Vinculación de cuenta personal con firma simétrica inmutable.",
+			"garantia": "La DAO firma tu cuenta: si alguien intenta duplicarla o cambiar su dueño, la firma deja de cuadrar y la operación se rechaza."},
 		{"clave": &"huella_equipo", "nombre": "Huella del equipo", "bloque": 3,
-			"llegada": Vector3(-30.4, 40.38, 0.0), "puesto": Vector3(-34.4, 40.38, 0.0),
+			"llegada": Vector3(-32.2, 41.6, 0.0), "puesto": Vector3(-34.4, 41.6, 0.0),
 			"cam": [Vector3(-29.2, 44.9, 7.6), Vector3(-34.4, 41.35, 0.0)],
 			"texto": "Huella del equipo: este dispositivo queda reconocido para tus próximas sesiones.",
-			"detalle": "Mina el Bloque #3: Sella el hash de hardware (UUID) para acceso seguro sin contraseña."},
+			"detalle": "Mina el Bloque #3: Sella el hash de hardware (UUID) para acceso seguro sin contraseña.",
+			"garantia": "Solo tu equipo puede entrar sin contraseña. Si otra máquina lo intenta, la huella no coincide y el acceso queda bloqueado."},
 		{"clave": &"firma_sesion", "nombre": "Firma de sesión", "bloque": 4,
-			"llegada": Vector3(0.0, 40.2, 30.4), "puesto": Vector3(0.0, 40.2, 34.4),
+			"llegada": Vector3(0.0, 41.6, 32.2), "puesto": Vector3(0.0, 41.6, 34.4),
 			"cam": [Vector3(-6.2, 43.9, 26.0), Vector3(0.0, 41.2, 35.2)],
 			"texto": "Firma de sesión: cada entrada se sella aquí. Nadie puede suplantarte.",
-			"detalle": "Mina el Bloque #4: Firma de sesión viva anti-suplantación (P2P Handshake)."},
+			"detalle": "Mina el Bloque #4: Firma de sesión viva anti-suplantación (P2P Handshake).",
+			"garantia": "Cada conexión lleva una firma viva que caduca: aunque alguien espíe la red, no puede reutilizarla para hacerse pasar por ti."},
 	]
 
 	# Inicializar la cadena de bloques local si no hay previa
@@ -565,9 +773,12 @@ func _registro_estaciones() -> void:
 		if i > 0:
 			_decir("DAO", "La DAO te desplaza a la siguiente estación.", 2.0)
 		await _desplazar(destino, puesto - destino)
+		if _lucia_sigue:
+			var dir := (puesto - destino).normalized()
+			_lucia_a(destino + dir.cross(Vector3.UP).normalized() * 1.35)
 		_paso("%d · %s (Bloque #%d)" % [i + 1, e["nombre"], e["bloque"]])
 		_seguir = true
-		_decir("DAO", e["texto"], 4.0)
+		_lucia_dice(e["texto"], 4.0)
 		await _caminar([_jugador.global_position, puesto], 1.9)
 		var cam: Array = e["cam"]
 		_encuadrar(cam[0], cam[1], 42.0)
@@ -585,13 +796,15 @@ func _registro_estaciones() -> void:
 			_plaza.call("completar", clave,
 					{"nick": _nick, "orden": i + 1, "bloque_hash": bloque_hash, "origen": "onboarding_dao"})
 		await _esperar(0.9)
-		_decir("DAO", "%s sellada en Bloque #%d." % [str(e["nombre"]), e["bloque"]], 2.2)
+		_lucia_dice("%s sellada en Bloque #%d." % [str(e["nombre"]), e["bloque"]], 2.2)
+		await _esperar_voz()
 
 	_encuadrar(Vector3(0.0, 112.0, 58.0), Vector3(0.0, 41.0, 0.0), 58.0)
 	_marcar(&"plaza_completa")
-	_paso("3 · El carrusel de avatares")
-	_decir("DAO", "Alta sellada en las cuatro estaciones. La DAO abre ahora el carrusel.", 4.0)
-	await _esperar(2.8)
+	_paso("3 · Registro protegido")
+	_lucia_dice("Alta sellada en las cuatro estaciones. Tu cuenta ya está protegida en la DAO.", 4.0)
+	await _esperar_voz()
+	await _esperar(0.6)
 
 
 func _inicializar_bloques_dao() -> void:
@@ -610,6 +823,9 @@ func _inicializar_bloques_dao() -> void:
 func _mostrar_dialogo_estacion_proteccion(estacion: Dictionary) -> void:
 	if _hud == null:
 		return
+	# La explicación de la estación termina antes de abrir el panel: la
+	# garantía no debe pisar la frase que aún está sonando.
+	await _esperar_voz()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 	_panel_estacion = PanelContainer.new()
@@ -648,6 +864,17 @@ func _mostrar_dialogo_estacion_proteccion(estacion: Dictionary) -> void:
 	_lbl_estacion_info.add_theme_color_override("font_color", Color(0.85, 0.95, 1.0))
 	caja.add_child(_lbl_estacion_info)
 
+	# LucIA explica en segundo plano qué garantiza este bloque para tu seguridad.
+	var garantia := str(estacion.get("garantia", ""))
+	if not garantia.is_empty():
+		var lbl_garantia := Label.new()
+		lbl_garantia.text = "🛡️ " + garantia
+		lbl_garantia.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		lbl_garantia.add_theme_font_size_override("font_size", 13)
+		lbl_garantia.add_theme_color_override("font_color", Color(0.72, 0.9, 0.78))
+		caja.add_child(lbl_garantia)
+		_voz("Garantía de seguridad: " + garantia)
+
 	_lbl_estacion_hash = Label.new()
 	_lbl_estacion_hash.text = "Hash previo: %s…" % _ultimo_hash_bloque.substr(0, 24)
 	_lbl_estacion_hash.add_theme_font_size_override("font_size", 11)
@@ -674,6 +901,10 @@ func _mostrar_dialogo_estacion_proteccion(estacion: Dictionary) -> void:
 		await get_tree().process_frame
 
 	_btn_aceptar_proteger.disabled = true
+	# El bloque no se sella ni avanza el siguiente paso hasta que LucIA termina
+	# de explicar la garantía: el botón confirma la cuenta, no corta la voz.
+	_btn_aceptar_proteger.text = "⏳ Sellando el bloque…"
+	await _esperar_voz(30.0)
 	_btn_aceptar_proteger.text = "✅ Bloque minado y sellado"
 	await _esperar(0.6)
 
@@ -736,7 +967,7 @@ func _carrusel_avatares() -> void:
 	if _carrusel == null:
 		return
 	_marcar(&"carrusel")
-	_paso("3 · Elige tu avatar")
+	_paso("2 · Elige tu avatar")
 	var estado := [true, ""]
 	var al_cerrar := func(ruta: String):
 		estado[0] = false
@@ -753,6 +984,8 @@ func _carrusel_avatares() -> void:
 		_carrusel.disconnect("carrusel_cerrado", al_cerrar)
 		if _hud != null:
 			_hud.visible = true
+		if _jugador != null:
+			_jugador.visible = true
 		return
 	if autoprueba:
 		await _esperar(2.4)
@@ -771,6 +1004,12 @@ func _carrusel_avatares() -> void:
 		if not id.is_empty():
 			_avatar_id = id
 			_cambiar_avatar(id)
+	# El avatar entra en escena al confirmarse la elección, no antes.
+	if _jugador != null:
+		_jugador.visible = true
+	# El aro queda parado desde la elección: el recorrido del avatar no lo gira.
+	if _carrusel != null and _carrusel.has_method("set_girando"):
+		_carrusel.call("set_girando", false)
 
 
 func _bienvenida_metaverso() -> void:
@@ -786,11 +1025,13 @@ func _bienvenida_metaverso() -> void:
 	var saludo := "Bienvenido al metaverso"
 	if not _nick.is_empty():
 		saludo = "%s, bienvenido al metaverso" % _nick
-	_decir("LucIA", saludo + ". Tu alta como ciudadano ya está sellada.", 5.0)
+	_lucia_dice(saludo + ". Tu alta como ciudadano ya está sellada.", 5.0)
 	await _esperar(2.4)
+	# El aviso del aspecto ya se dijo al arrancar el recorrido: este plano solo
+	# presenta al avatar antes de encarar el espejo.
 	_tomar_camara(Vector3(21.0, 44.6, 21.4), Vector3(4.0, 42.7, 4.0), 2.2, 46.0)
-	_decir("LucIA", "Ese avatar es tu identidad aquí. Vamos a darle tu aspecto antes de abrir tu isla.", 4.5)
 	await _esperar(2.6)
+	await _esperar_voz()
 
 
 func _cambiar_avatar(id: String) -> void:
@@ -813,7 +1054,7 @@ func _caminar_al_espejo() -> void:
 		return
 	_paso("5 · El espejo del avatar")
 	_marcar(&"personalizacion")
-	_decir("LucIA", "Tu avatar ya tiene forma. El espejo de la DAO te espera para personalizarlo.", 4.5)
+	_lucia_dice("Tu avatar ya tiene forma. El espejo de la DAO te espera para personalizarlo.", 4.5)
 	# El aro queda parado mientras el avatar cruza el atrio.
 	if _carrusel != null and _carrusel.has_method("set_girando"):
 		_carrusel.call("set_girando", false)
@@ -821,16 +1062,18 @@ func _caminar_al_espejo() -> void:
 	if _zona != null and _zona.has_method("punto_puesto"):
 		puesto = _zona.call("punto_puesto")
 	_seguir = true
-	# Rodeo por el sur: esquiva la consola del carrusel (su zona reabriría la
-	# capa interactiva) y el pedestal de las 22,5°.
+	# Recta desde el puesto sur hasta la puerta sur del tambor y, ya dentro,
+	# rodeo por el este del portal y por el hueco entre las estatuas del aro.
+	# El paso se pega al del jugador en este tramo: con el costado de siempre,
+	# el rodeo de LucIA rozaba los pedestales del sur.
 	await _caminar([
 		_jugador.global_position,
-		_punto(13.0, 15.9, SUELO_ATRIO),
-		_punto(9.6, 16.4, SUELO_ATRIO),
-		_punto(5.6, 15.8, SUELO_ATRIO),
-		_punto(2.6, 13.6, SUELO_ATRIO),
+		_punto(0.0, 21.0, SUELO_ATRIO),
+		_punto(4.9, 19.2, SUELO_ATRIO),
+		_punto(4.4, 15.4, SUELO_ATRIO),
+		_punto(2.2, 12.9, SUELO_ATRIO),
 		puesto,
-	], 2.0)
+	], 2.0, true, 0.75)
 	# El editor vive dentro de la DAO: el avatar se gira al frente para que la
 	# cámara del atrio lo vea de cara, con el espejo a su espalda.
 	var giro := create_tween()
@@ -867,7 +1110,8 @@ func _abrir_editor() -> void:
 	if autoprueba:
 		await _esperar(2.8)
 		# En prueba se confirma sin guardar el aspecto: no se toca el perfil real.
-		_editor.emit_signal("aspecto_confirmado")
+		if _editor != null and is_instance_valid(_editor):
+			_editor.emit_signal("aspecto_confirmado")
 
 
 func _al_confirmar_aspecto() -> void:
@@ -899,7 +1143,7 @@ func _entregar_control() -> void:
 		_carrusel.call("set_auto_abrir", true)
 	# El aro sigue parado: el alta no lo suelta hasta cruzar el portal.
 	_baliza_portal()
-	_decir("LucIA", "Desde aquí caminas tú. Sigue la baliza hasta el portal: al cruzarlo nace tu isla.", 7.0)
+	_lucia_dice("Desde aquí caminas tú. Sigue la baliza hasta el portal: al cruzarlo nace tu isla.", 7.0)
 	_pista("WASD / flechas para moverte · ratón con botón derecho para mirar · SHIFT para correr")
 	_montar_boton_guardar_dao()
 	if autoprueba:
@@ -1043,8 +1287,12 @@ func _al_cruzar_portal() -> void:
 	_marcar(&"portal")
 	_paso("6 · Tu isla")
 	_encuadrar(Vector3(8.6, 44.7, 13.8), Vector3(0.0, 42.6, 18.2), 40.0)
-	_decir("LucIA", "Portal del archipiélago. Registro tu isla y la despliego en tu punto del reparto.", 5.0)
-	await _esperar(1.6)
+	# La indicación de caminar hacia la baliza termina antes de la frase del
+	# portal: al cruzar nunca se corta lo que LucIA está diciendo.
+	await _esperar_voz(15.0)
+	_lucia_dice("Portal del archipiélago. Registro tu isla y la despliego en tu punto del reparto.", 5.0)
+	await _esperar_voz()
+	await _esperar(0.4)
 	if _jugador != null:
 		_columna(_jugador.global_position, 5.5)
 	_tomar_camara(Vector3(7.6, 44.2, 15.6), Vector3(0.0, 43.0, 18.2), 1.6, 42.0)

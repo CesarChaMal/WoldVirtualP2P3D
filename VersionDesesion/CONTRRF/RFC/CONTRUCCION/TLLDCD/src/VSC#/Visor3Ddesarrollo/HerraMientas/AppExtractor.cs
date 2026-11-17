@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Reflection;
 using System.Windows;
+using Visor3D.Services;
 
 namespace Visor3D
 {
@@ -60,8 +61,16 @@ namespace Visor3D
         /// <summary>Mundo empaquetado que se pasa a Godot con <c>--main-pack</c>.</summary>
         public static string PckPath => Path.Combine(RuntimeDir, "wvp3d.pck");
 
-        /// <summary>PCK delta 2.8.7: lleva únicamente recursos modificados desde 2.8.6.</summary>
+        /// <summary>Solo las builds delta antiguas embeben este parche; la 2.8.7 va completa.</summary>
         public static string DaoPatchPath => Path.Combine(RuntimeDir, "dao_patch.pck");
+
+        /// <summary>La build actual lleva el mundo completo y no necesita la base 2.8.6.</summary>
+        public static bool EmbebeMundoCompleto =>
+            typeof(AppExtractor).Assembly.GetManifestResourceInfo("Visor3D.wvp3d.pck") != null;
+
+        /// <summary>La build actual lleva un PCK delta que exige montar la base 2.8.6.</summary>
+        public static bool EmbebeDeltaDao =>
+            typeof(AppExtractor).Assembly.GetManifestResourceInfo("Visor3D.dao_patch.pck") != null;
 
         /// <summary>Proyecto suelto (solo modo desarrollo; ya no se extrae del .exe).</summary>
         public static string ProjectPath => Path.Combine(RuntimeDir, "WoldVirtualP2P3D");
@@ -76,6 +85,7 @@ namespace Visor3D
             {
                 var assembly = Assembly.GetExecutingAssembly();
                 bool expectsPatch = assembly.GetManifestResourceInfo("Visor3D.dao_patch.pck") != null;
+                bool expectsPck = assembly.GetManifestResourceInfo("Visor3D.wvp3d.pck") != null;
                 if (File.Exists(VersionFile) &&
                     File.Exists(GodotExePath) &&
                     Directory.Exists(ConstructorTemplateDir))
@@ -96,8 +106,11 @@ namespace Visor3D
                                 expectedPatchHash = lines[i].Substring("dao_patch_sha256=".Length).Trim();
                         }
 
-                        // Reutilizar solo si ambos hashes coinciden (H4: fiabilidad de extracción)
-                        bool pckOk = string.IsNullOrEmpty(expectedPckHash) || CalcularSha256(PckPath) == expectedPckHash;
+                        // Reutilizar solo si los hashes coinciden (H4: fiabilidad de extracción).
+                        // El mundo completo es obligatorio en la build 2.8.7: un marcador de
+                        // una build delta anterior no puede darse por válido.
+                        bool pckOk = !expectsPck ||
+                            (!string.IsNullOrEmpty(expectedPckHash) && CalcularSha256(PckPath) == expectedPckHash);
                         bool godotOk = string.IsNullOrEmpty(expectedGodotHash) || CalcularSha256(GodotExePath) == expectedGodotHash;
                         bool patchOk = !expectsPatch ||
                             (!string.IsNullOrEmpty(expectedPatchHash) && CalcularSha256(DaoPatchPath) == expectedPatchHash);
@@ -110,7 +123,18 @@ namespace Visor3D
 
                 if (Directory.Exists(RuntimeDir))
                 {
-                    try { Directory.Delete(RuntimeDir, recursive: true); } catch { }
+                    try
+                    {
+                        Directory.Delete(RuntimeDir, recursive: true);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Un Godot anterior aún ejecutándose mantiene bloqueado el
+                        // runtime. Seguir extrayendo dejaría media versión mezclada.
+                        throw new IOException(
+                            $"No se pudo limpiar el runtime anterior: {RuntimeDir}\n" +
+                            "Cierra cualquier visor o proceso Godot que siga abierto.", ex);
+                    }
                 }
                 Directory.CreateDirectory(RuntimeDir);
 
@@ -128,9 +152,11 @@ namespace Visor3D
                         File.Copy(found[0], godotEnServidor, overwrite: true);
                 }
 
-                // 2. Mundo empaquetado → wvp3d.pck (opcional: en v2.8.1 el PCK
-                //    viaja dentro del paquete volátil y no se embebe suelto).
-                ExtractFile(assembly, "Visor3D.wvp3d.pck", PckPath);
+                // 2. Mundo empaquetado → wvp3d.pck. La 2.8.7 lo embebe completo;
+                //    en builds delta viaja dentro del paquete volátil o no existe.
+                bool pckExtraido = ExtractFile(assembly, "Visor3D.wvp3d.pck", PckPath);
+                if (expectsPck && !pckExtraido)
+                    throw new InvalidDataException("El mundo completo está embebido, pero no se pudo extraer.");
 
                 // El parche incremental contiene solo los recursos cambiados desde 2.8.6.
                 bool patchExtraido = ExtractFile(assembly, "Visor3D.dao_patch.pck", DaoPatchPath);
@@ -154,6 +180,7 @@ namespace Visor3D
             }
             catch (Exception ex)
             {
+                VisorLog.Info($"[extracción] {ex.GetType().Name}: {ex.Message}");
                 if (!SilentErrors)
                 {
                     MessageBox.Show(

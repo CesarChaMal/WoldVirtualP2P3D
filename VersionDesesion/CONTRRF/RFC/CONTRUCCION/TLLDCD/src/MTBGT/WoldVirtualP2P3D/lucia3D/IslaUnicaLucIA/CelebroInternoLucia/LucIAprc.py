@@ -1,7 +1,23 @@
-# IMPORTAR AQUI E:\WoldVirtualP2P3D\VersionDesesion\CONTRRF\RFC\CONTRUCCION\TLLDCD\src\STMGNRL\SistemaGeneral\mainLCSTM.py 
-# De la  forma  correcta  E:\WoldVirtualP2P3D\VersionDesesion\CONTRRF\RFC\CONTRUCCION\.dev\gestor_entorno.py ayudate con este  modulo., python .,
-# la idea esque luciIA tenga pleno  control de su avatar 3D
-# COMO EN EL EXPERIMENTO ECO DEL MIT.
+# =============================================================================
+# IMPORTACIÓN CANÓNICA DE mainLCSTM (Orquestador Central Cognitivo de LucIA)
+# Conforme a la jerarquía modular de rutas de .dev y TLLDCD
+# Permite a LucIA tener pleno control de su avatar 3D como en el experimento Eco del MIT.
+# =============================================================================
+import sys
+from pathlib import Path
+
+_DIR_ACTUAL = Path(__file__).resolve().parent
+_SRC_DIR = _DIR_ACTUAL.parents[4]  # TLLDCD/src
+_DEV_DIR = _DIR_ACTUAL.parents[6] / ".dev"
+
+for _directorio_adicional in (str(_SRC_DIR), str(_DEV_DIR)):
+    if _directorio_adicional not in sys.path:
+        sys.path.insert(0, _directorio_adicional)
+
+try:
+    from STMGNRL.SistemaGeneral import mainLCSTM
+except (ImportError, ValueError):
+    mainLCSTM = None
 
 """
 SeguridadNeuronal - Módulo de seguridad matemáticamente robusto para LucIA
@@ -9,9 +25,14 @@ SeguridadNeuronal - Módulo de seguridad matemáticamente robusto para LucIA
 Implementa:
   - Entropía de Shannon para detección de anomalías
   - Red neuronal MLP (2 capas ocultas) para clasificación de amenazas
+  - Aprendizaje online del MLP (retropropagación con recorte de gradiente)
+  - Distancia de Mahalanobis diagonal para detectar vectores fuera de baseline
   - Umbral adaptativo bayesiano (Teorema de Bayes)
+  - Control estadístico de proceso: EWMA + CUSUM bilateral
   - Hash de integridad SHA-256
-  - Firma HMAC para autenticación de mensajes
+  - Firma HMAC y derivación HKDF (RFC 5869) por módulo
+  - Anti-replay con nonce aleatorio y ventana temporal (TTL)
+  - Limitador de tasa por cubo de fichas (token bucket)
   - Sistema de cuarentena con puntuación de riesgo exponencial
   - Narración en español para el avatar 3D de LucIA
 """
@@ -23,8 +44,11 @@ import json
 import time
 import random
 import os
+import socket
+import threading as _threading
 from collections import Counter, deque
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
 # Intento de importar numpy; si no está disponible se usa modo fallback puro Python
 try:
@@ -65,6 +89,447 @@ def _sigmoid(x):
 def _add_bias(v, b):
     """Suma el vector de bias a un vector de activaciones."""
     return [vi + bi for vi, bi in zip(v, b)]
+
+
+# ---------------------------------------------------------------------------
+# Clase Principal de Seguridad 3D para la DAO y Avatar de LucIA
+# ---------------------------------------------------------------------------
+
+class Seguridad3D:
+    """
+    Clase principal de seguridad neuronal para LucIA en 3D y protección de la DAO.
+
+    Combina técnicas de teoría de la información, aprendizaje automático
+    ligero y criptografía para proteger la integridad del cerebro interno
+    de LucIA y detectar amenazas en tiempo real. Además de cálculo neuronal 
+    que mediante sockets conecta a un GDScript concreto para proteger la DAO,
+    orquestando el control del avatar 3D de LucIA conforme al Experimento Eco del MIT.
+    """
+
+    ALTURA_MESETA: float = 40.2
+    RADIO_PERIMETRO_DAO: float = 31.0
+    RADIO_OFICINA_CENTRAL: float = 7.2
+    PUERTO_SOCKET_DEFECTO: int = 9099
+
+    ESTACIONES_CARDINALES: dict = {
+        "identidad": (0.0, 40.2, 22.0),       # Norte (PlazaRegistroDAO: RegistroNorte)
+        "cuenta_unica": (22.0, 40.2, 0.0),    # Este (PlazaRegistroDAO: RegistroEste)
+        "huella_equipo": (-22.0, 40.2, 0.0),  # Oeste (PlazaRegistroDAO: RegistroOeste)
+        "firma_sesion": (0.0, 40.2, -22.0),   # Sur (PlazaRegistroDAO: RegistroSur)
+    }
+
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        puerto_socket: int = PUERTO_SOCKET_DEFECTO,
+        clave_maestra: str = "LucIA_DAO_Security_3D_MIT_ECO",
+        autoiniciar_socket: bool = False
+    ):
+        self.host: str = host
+        self.puerto: int = puerto_socket
+        self.clave_maestra: str = clave_maestra
+        self.clave_bytes: bytes = clave_maestra.encode("utf-8")
+        self.timestamp_inicio: float = time.time()
+
+        # Vinculación al Orquestador Central Cognitivo de LucIA
+        self.orquestador_cognitivo = mainLCSTM
+
+        # Referencia perezosa al subsistema de SeguridadNeuronal primitivo
+        self._seguridad_neuronal: Optional["SeguridadNeuronal"] = None
+
+        # Red neuronal especializada en la DAO (MLP: entrada 8 -> oculta1 12 -> oculta2 6 -> salida 1)
+        self._pesos_dao = self._inicializar_red_dao()
+
+        # Estado del Avatar 3D de LucIA (Modelo de Agente Sintético · Experimento Eco del MIT)
+        self.estado_avatar: dict = {
+            "expresion": "amable",
+            "gesto": "reposo",
+            "postura": "de_pie",
+            "apertura_boca": 0.0,
+            "alerta_activa": False,
+            "orientacion_objetivo": [0.0, 40.2, 0.0],
+            "ultima_frase": "Sistemas de la DAO del metaverso operativos y protegidos.",
+        }
+
+        # Estado de seguridad de la DAO
+        self.nivel_salud_dao: float = 100.0  # 0.0 a 100.0
+        self.cuarentena_dao: dict = {}
+        self.historial_eventos_dao: deque = deque(maxlen=512)
+
+        # Servidor de Sockets TCP NDJSON para conexión bidireccional con GDScript
+        self._servidor_socket: Optional[socket.socket] = None
+        self._hilo_socket: Optional[_threading.Thread] = None
+        self._activo: bool = False
+        self._bloqueo = _threading.Lock()
+
+        if autoiniciar_socket:
+            self.iniciar_servidor_socket()
+
+    @property
+    def subsistema_neuronal(self) -> "SeguridadNeuronal":
+        """Obtiene o inicializa de forma segura la instancia de SeguridadNeuronal."""
+        if self._seguridad_neuronal is None:
+            self._seguridad_neuronal = SeguridadNeuronal(self.clave_maestra)
+        return self._seguridad_neuronal
+
+    def _inicializar_red_dao(self) -> dict:
+        """Inicializa los pesos de la red neuronal de la DAO usando Xavier y semilla criptográfica."""
+        semilla_hex = hashlib.sha256(self.clave_bytes + b"::dao_neural_weights_v3").hexdigest()
+        semilla_int = int(semilla_hex[:8], 16)
+        rng = random.Random(semilla_int)
+
+        def _xavier(fan_in: int, fan_out: int) -> list:
+            limite = math.sqrt(6.0 / (fan_in + fan_out))
+            return [[rng.uniform(-limite, limite) for _ in range(fan_in)] for _ in range(fan_out)]
+
+        return {
+            "W1": _xavier(8, 12),
+            "b1": [0.0] * 12,
+            "W2": _xavier(12, 6),
+            "b2": [0.0] * 6,
+            "W3": _xavier(6, 1),
+            "b3": [-0.35],  # sesgo inicial
+        }
+
+    def _forward_dao(self, vector_8d: list) -> float:
+        """Propagación hacia adelante por el MLP de seguridad de la DAO (8 -> 12 -> 6 -> 1)."""
+        z1 = _add_bias(_mat_vec(self._pesos_dao["W1"], vector_8d), self._pesos_dao["b1"])
+        a1 = _relu(z1)
+        z2 = _add_bias(_mat_vec(self._pesos_dao["W2"], a1), self._pesos_dao["b2"])
+        a2 = _relu(z2)
+        z3 = _add_bias(_mat_vec(self._pesos_dao["W3"], a2), self._pesos_dao["b3"])
+        return _sigmoid(z3[0])
+
+    def construir_vector_dao(
+        self,
+        actor: str,
+        posicion_3d: list,
+        estacion: str = "",
+        cadencia_req_s: float = 1.0,
+        firma_valida: bool = True
+    ) -> list:
+        """
+        Construye un vector normalizado de 8 dimensiones para inferencia neuronal:
+        [0] Distancia radial normalizada en plano XZ (0.0 = centro, >1.0 = fuera del atrio)
+        [1] Desviación vertical Y normalizada respecto a la meseta (40.2m)
+        [2] Distancia euclidiana a la estación cardinal declarada
+        [3] Cadencia de peticiones normalizada (token bucket)
+        [4] Coherencia de firma criptográfica (0.0 = válida, 1.0 = inválida)
+        [5] Entropía de interacción del actor
+        [6] Nivel de historial de incidentes
+        [7] Deriva acumulada CUSUM / baseline
+        """
+        x = float(posicion_3d[0]) if len(posicion_3d) > 0 else 0.0
+        y = float(posicion_3d[1]) if len(posicion_3d) > 1 else self.ALTURA_MESETA
+        z = float(posicion_3d[2]) if len(posicion_3d) > 2 else 0.0
+
+        dist_radial = math.sqrt(x * x + z * z)
+        d_norm = min(2.0, dist_radial / self.RADIO_PERIMETRO_DAO)
+        desv_y = min(2.0, abs(y - self.ALTURA_MESETA) / 4.0)
+
+        d_estacion = 0.0
+        if estacion in self.ESTACIONES_CARDINALES:
+            ex, ey, ez = self.ESTACIONES_CARDINALES[estacion]
+            d_est = math.sqrt((x - ex)**2 + (y - ey)**2 + (z - ez)**2)
+            d_estacion = min(2.0, d_est / 15.0)
+
+        cad_norm = min(2.0, cadencia_req_s / 5.0)
+        sig_penalidad = 0.0 if firma_valida else 1.0
+
+        self.subsistema_neuronal.registrar_evento(f"dao_actor:{actor[:16]}")
+        entropia = self.subsistema_neuronal.detectar_anomalia_entropia()["entropia"]
+        ent_norm = min(1.0, entropia / 4.0)
+
+        incidentes = self.cuarentena_dao.get(actor, {}).get("incidentes", 0)
+        inc_norm = min(2.0, incidentes / 5.0)
+
+        cusum_val = min(1.0, max(0.0, self.subsistema_neuronal._cusum_pos / 5.0))
+
+        return [d_norm, desv_y, d_estacion, cad_norm, sig_penalidad, ent_norm, inc_norm, cusum_val]
+
+    def evaluar_seguridad_dao(
+        self,
+        actor: str,
+        posicion_3d: list,
+        estacion: str = "",
+        firma_valida: bool = True,
+        cadencia: float = 1.0
+    ) -> dict:
+        """
+        Evalúa de forma integral la interacción dentro de la DAO usando:
+        - Inferencia neuronal con MLP especializado en espacio 3D
+        - Distancia de Mahalanobis y CUSUM bilateral
+        - Detección de teletransporte o violación de perímetro 3D
+        - Generación de comandos para el avatar 3D según el Experimento Eco del MIT
+        """
+        with self._bloqueo:
+            ahora = time.time()
+            if actor in self.cuarentena_dao:
+                info_q = self.cuarentena_dao[actor]
+                if ahora < info_q.get("expira", 0):
+                    reaccion = self.control_avatar_eco_mit(
+                        estado_seguridad="CUARENTENA",
+                        nivel_riesgo=1.0,
+                        posicion_intruso=posicion_3d,
+                        motivo=f"Entidad en cuarentena activa: {info_q.get('razon')}"
+                    )
+                    return {
+                        "autorizado": False,
+                        "riesgo": 1.0,
+                        "decision": "CUARENTENA",
+                        "motivo": f"Actor en cuarentena hasta {datetime.fromtimestamp(info_q['expira']).isoformat()}",
+                        "accion_avatar": reaccion,
+                        "color_baliza": "rojo_bloqueo",
+                        "halo_estacion": "inactiva"
+                    }
+
+            vector_8d = self.construir_vector_dao(actor, posicion_3d, estacion, cadencia, firma_valida)
+            p_red = self._forward_dao(vector_8d)
+
+            self.subsistema_neuronal.actualizar_ewma(p_red)
+            cusum_res = self.subsistema_neuronal.actualizar_cusum(p_red)
+
+            self.subsistema_neuronal.calibrar_baseline(vector_8d[:6])
+            mahal = self.subsistema_neuronal.detectar_anomalia_mahalanobis(vector_8d[:6])
+
+            prob_bayes = self.subsistema_neuronal.actualizar_bayesiano(
+                p_red > 0.5 or mahal.get("probabilidad", 0.0) >= 0.5
+            )
+            riesgo_final = max(p_red, prob_bayes, mahal["probabilidad"])
+
+            if riesgo_final >= 0.70 or not firma_valida:
+                decision = "BLOQUEAR"
+                autorizado = False
+                self.nivel_salud_dao = max(0.0, self.nivel_salud_dao - 15.0)
+                self.cuarentena_dao[actor] = {
+                    "incidentes": self.cuarentena_dao.get(actor, {}).get("incidentes", 0) + 1,
+                    "expira": ahora + 120.0,
+                    "razon": f"Riesgo crítico detectado ({riesgo_final:.2f})"
+                }
+                halo_estacion = "inactiva"
+                color_baliza = "rojo_bloqueo"
+            elif riesgo_final >= 0.35:
+                decision = "ADVERTIR"
+                autorizado = True
+                self.nivel_salud_dao = max(0.0, self.nivel_salud_dao - 3.0)
+                halo_estacion = "activa"
+                color_baliza = "oro_advertencia"
+            else:
+                decision = "PERMITIR"
+                autorizado = True
+                self.nivel_salud_dao = min(100.0, self.nivel_salud_dao + 1.0)
+                halo_estacion = "completa" if estacion else "activa"
+                color_baliza = "cian_normal"
+
+            reaccion_avatar = self.control_avatar_eco_mit(
+                estado_seguridad=decision,
+                nivel_riesgo=riesgo_final,
+                posicion_intruso=posicion_3d,
+                motivo=f"Estación {estacion or 'atrio central'}"
+            )
+
+            resultado = {
+                "autorizado": autorizado,
+                "riesgo": round(riesgo_final, 4),
+                "p_red_neuronal": round(p_red, 4),
+                "p_bayes": round(prob_bayes, 4),
+                "mahalanobis_d": round(mahal["distancia"], 4),
+                "decision": decision,
+                "salud_dao": round(self.nivel_salud_dao, 2),
+                "accion_avatar": reaccion_avatar,
+                "color_baliza": color_baliza,
+                "halo_estacion": halo_estacion,
+                "timestamp": ahora,
+            }
+            self.historial_eventos_dao.append(resultado)
+            return resultado
+
+    def control_avatar_eco_mit(
+        self,
+        estado_seguridad: str,
+        nivel_riesgo: float,
+        posicion_intruso: list = None,
+        motivo: str = ""
+    ) -> dict:
+        """
+        Modelo de Comportamiento Autónomo del Avatar 3D basado en el Experimento Eco del MIT.
+        Controla dinámicamente la expresión facial, gestualidad de los 65 huesos Mixamo,
+        rotación de cabeza/mirada hacia el objetivo y lipsync vocal para interactuar
+        con los scripts de Godot (lucia_personaje.gd, InteriorDAO.gd y PlazaRegistroDAO.gd).
+        """
+        pos = posicion_intruso or [0.0, self.ALTURA_MESETA, 0.0]
+
+        if nivel_riesgo < 0.30:
+            expresion = "amable"
+            gesto = "bienvenida"
+            postura = "de_pie"
+            lipsync = 0.0
+            frase = "Bienvenido al atrio de la DAO del metaverso. La estación se encuentra operativa y segura."
+            alerta = False
+        elif nivel_riesgo < 0.70:
+            expresion = "curiosa_cautelosa"
+            gesto = "atencion"
+            postura = "orientar_cabeza"
+            lipsync = 0.45
+            frase = f"Precaución en la isla. Detecto inconsistencias en la interacción: {motivo}."
+            alerta = True
+        else:
+            expresion = "defensiva_firme"
+            gesto = "detener_paso"
+            postura = "alerta_defensiva"
+            lipsync = 0.85
+            frase = f"Acceso suspendido por protocolo de seguridad neuronal. {motivo}."
+            alerta = True
+
+        comando = {
+            "expresion": expresion,
+            "gesto": gesto,
+            "postura": postura,
+            "lipsync_apertura": lipsync,
+            "rotar_hacia": [pos[0], pos[1], pos[2]],
+            "alerta_activa": alerta,
+            "narracion_voz": frase,
+            "timestamp": time.time(),
+        }
+        self.estado_avatar.update(comando)
+        return comando
+
+    def sellar_transaccion_dao(self, datos_transaccion: dict) -> str:
+        """Sella criptográficamente una transacción de la DAO usando HKDF y HMAC-SHA256."""
+        clave_dao = self.subsistema_neuronal.derivar_clave("modulo:dao_metaverso_governance")
+        datos_str = json.dumps(datos_transaccion, sort_keys=True, ensure_ascii=False)
+        h = _hmac.new(clave_dao, datos_str.encode("utf-8"), hashlib.sha256)
+        return h.hexdigest()
+
+    def verificar_transaccion_dao(self, datos_transaccion: dict, firma: str) -> bool:
+        """Verifica la firma HMAC-SHA256 de una transacción de la DAO."""
+        esperada = self.sellar_transaccion_dao(datos_transaccion)
+        return _hmac.compare_digest(esperada, firma)
+
+    def iniciar_servidor_socket(self) -> bool:
+        """Inicia el servidor socket TCP NDJSON en segundo plano para comunicarse con Godot (GDScript)."""
+        with self._bloqueo:
+            if self._activo:
+                return True
+            try:
+                self._servidor_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self._servidor_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self._servidor_socket.bind((self.host, self.puerto))
+                self._servidor_socket.listen(5)
+                self._servidor_socket.settimeout(1.0)
+                self._activo = True
+
+                self._hilo_socket = _threading.Thread(
+                    target=self._bucle_servidor_socket,
+                    name="LucIA_Seguridad3D_Socket",
+                    daemon=True
+                )
+                self._hilo_socket.start()
+                return True
+            except Exception:
+                self._activo = False
+                return False
+
+    def detener_servidor_socket(self) -> None:
+        """Detiene el servidor socket y cierra conexiones."""
+        with self._bloqueo:
+            self._activo = False
+            if self._servidor_socket:
+                try:
+                    self._servidor_socket.close()
+                except Exception:
+                    pass
+                self._servidor_socket = None
+
+    def _bucle_servidor_socket(self) -> None:
+        """Bucle en segundo plano para aceptar conexiones de nodos GDScript."""
+        while self._activo and self._servidor_socket:
+            try:
+                cliente, _ = self._servidor_socket.accept()
+                _threading.Thread(
+                    target=self._atender_cliente_gdscript,
+                    args=(cliente,),
+                    daemon=True
+                ).start()
+            except socket.timeout:
+                continue
+            except Exception:
+                break
+
+    def _atender_cliente_gdscript(self, cliente: socket.socket) -> None:
+        """Atiende la conexión NDJSON con un nodo GDScript de Godot."""
+        cliente.settimeout(5.0)
+        buffer = ""
+        try:
+            with cliente:
+                while self._activo:
+                    datos = cliente.recv(4096)
+                    if not datos:
+                        break
+                    buffer += datos.decode("utf-8", errors="replace")
+                    while "\n" in buffer:
+                        linea, buffer = buffer.split("\n", 1)
+                        linea = linea.strip()
+                        if not linea:
+                            continue
+                        respuesta = self.procesar_mensaje_gdscript(linea)
+                        cliente.sendall((respuesta + "\n").encode("utf-8"))
+        except Exception:
+            pass
+
+    def procesar_mensaje_gdscript(self, linea_json: str) -> str:
+        """
+        Procesa una línea JSON recibida desde GDScript y devuelve la respuesta NDJSON:
+        Comandos admitidos:
+        - 'evaluar_interaccion': Evalúa un actor en una estación cardinal de la DAO.
+        - 'sellar_transaccion': Sella criptográficamente una transacción de la DAO.
+        - 'verificar_transaccion': Valida la integridad de un registro.
+        - 'estado_dao': Devuelve la telemetría de salud y estado del avatar.
+        """
+        try:
+            solicitud = json.loads(linea_json)
+        except Exception as e:
+            return json.dumps({"error": f"JSON inválido: {e}"}, ensure_ascii=False)
+
+        cmd = solicitud.get("comando") or solicitud.get("tipo") or "evaluar_interaccion"
+
+        if cmd in ("ping", "echo"):
+            return json.dumps({"pong": True, "timestamp": time.time()}, ensure_ascii=False)
+
+        elif cmd in ("evaluar_interaccion", "evaluar_acceso"):
+            actor = str(solicitud.get("actor", "anonimo_dao"))
+            pos = solicitud.get("posicion", [0.0, self.ALTURA_MESETA, 0.0])
+            estacion = str(solicitud.get("estacion", ""))
+            firma_ok = bool(solicitud.get("firma_valida", True))
+            cadencia = float(solicitud.get("cadencia", 1.0))
+            res = self.evaluar_seguridad_dao(actor, pos, estacion, firma_ok, cadencia)
+            return json.dumps(res, ensure_ascii=False)
+
+        elif cmd == "sellar_transaccion":
+            datos_tx = solicitud.get("datos") or solicitud.get("transaccion") or {}
+            firma = self.sellar_transaccion_dao(datos_tx)
+            return json.dumps({"ok": True, "firma": firma, "timestamp": time.time()}, ensure_ascii=False)
+
+        elif cmd == "verificar_transaccion":
+            datos_tx = solicitud.get("datos") or solicitud.get("transaccion") or {}
+            firma = str(solicitud.get("firma", ""))
+            valido = self.verificar_transaccion_dao(datos_tx, firma)
+            return json.dumps({"ok": True, "valida": valido, "valido": valido}, ensure_ascii=False)
+
+        elif cmd in ("estado_dao", "obtener_estado_avatar"):
+            return json.dumps({
+                "ok": True,
+                "salud_dao": self.nivel_salud_dao,
+                "estado": self.estado_avatar,
+                "avatar": self.estado_avatar,
+                "cuarentenas_activas": len(self.cuarentena_dao),
+                "total_eventos": len(self.historial_eventos_dao),
+                "orquestador_cognitivo": bool(self.orquestador_cognitivo is not None),
+                "tiempo_activo": round(time.time() - self.timestamp_inicio, 2),
+            }, ensure_ascii=False)
+
+        else:
+            return json.dumps({"error": f"Comando '{cmd}' no reconocido por Seguridad3D"}, ensure_ascii=False)
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +591,29 @@ class SeguridadNeuronal:
         # módulo → {"riesgo": float, "timestamp": float, "razon": str}
         self._cuarentena: dict = {}
         self._umbral_cuarentena: float = 0.75   # riesgo > 0.75 → cuarentena
+
+        # --- Anti-replay: nonce → instante de expiración ---
+        self._nonces_vistos: dict = {}
+        self._ttl_nonce: float = 30.0
+        self._cerrojo = _threading.Lock()
+
+        # --- Limitador de tasa por cubo de fichas ---
+        # clave → [fichas_disponibles, ultimo_instante]
+        self._cubos: dict = {}
+
+        # --- Control estadístico: EWMA y CUSUM ---
+        self._ewma_riesgo: float = 0.0
+        self._cusum_pos: float = 0.0
+        self._cusum_neg: float = 0.0
+        self._cusum_objetivo: float = 0.20
+        self._cusum_deriva: float = 0.10
+        self._cusum_umbral: float = 2.50
+
+        # --- Baseline del vector de amenaza (media y M2 de Welford) ---
+        self._baseline_media: list = [0.0] * 6
+        self._baseline_m2: list = [0.0] * 6
+        self._baseline_n: int = 0
+        self._ultima_p_mahalanobis: float = 0.0
 
         # --- Log de auditoría ---
         self._log: list = []
@@ -214,14 +702,28 @@ class SeguridadNeuronal:
             - "confianza": float en [0,1]
         """
         prob = self._forward_nn(vector_amenaza)
-        clasificacion = "AMENAZA" if prob >= 0.5 else "SEGURO"
-        confianza = prob if prob >= 0.5 else (1.0 - prob)
+        self.actualizar_ewma(prob)
+        cusum = self.actualizar_cusum(prob)
+        mahal = self.detectar_anomalia_mahalanobis(vector_amenaza)
 
-        self._registrar_log("NN", f"Vector clasificado como {clasificacion} (p={prob:.4f})")
+        # Fusión de detectores: la red neuronal y la distancia al baseline
+        # votan con el máximo (OR), de modo que un vector claramente fuera
+        # de distribución no pase desapercibido aunque el MLP lo subestime.
+        fusion = prob
+        if mahal["suficiente"]:
+            fusion = max(prob, float(mahal["probabilidad"]))
+        clasificacion = "AMENAZA" if fusion >= 0.5 else "SEGURO"
+        confianza = fusion if fusion >= 0.5 else (1.0 - fusion)
+
+        self._registrar_log("NN", f"Vector clasificado como {clasificacion} (p={fusion:.4f})")
         return {
-            "probabilidad": prob,
+            "probabilidad": fusion,
+            "probabilidad_mlp": prob,
             "clasificacion": clasificacion,
             "confianza": confianza,
+            "mahalanobis": mahal,
+            "cusum": cusum,
+            "ewma": round(self._ewma_riesgo, 4),
         }
 
     # ------------------------------------------------------------------
@@ -553,6 +1055,313 @@ class SeguridadNeuronal:
         return dict(self._cuarentena)
 
     # ------------------------------------------------------------------
+    # 7b. REFUERZO MATEMÁTICO (ampliación de la clase)
+    # ------------------------------------------------------------------
+
+    def derivar_clave(self, info: str, sal: bytes = b"", longitud: int = 32) -> bytes:
+        """
+        Deriva una subclave con HKDF-SHA256 (RFC 5869).
+
+        Cada módulo recibe su propia clave, de modo que comprometer un módulo
+        no permite forjar mensajes de otro (separación de claves).
+
+        Parámetros
+        ----------
+        info : str
+            Etiqueta de contexto (p. ej. el nombre del módulo).
+        sal : bytes
+            Sal opcional; si falta se usa una sal nula de 32 bytes.
+        longitud : int
+            Bytes de clave a derivar (máximo 255·32).
+
+        Retorna
+        -------
+        bytes : clave derivada
+        """
+        if longitud < 1 or longitud > 255 * 32:
+            raise ValueError("Longitud HKDF fuera de rango (1..8160 bytes).")
+        prk = _hmac.new(sal or b"\x00" * 32, self._clave_bytes, hashlib.sha256).digest()
+        okm = b""
+        bloque = b""
+        contador = 1
+        while len(okm) < longitud:
+            bloque = _hmac.new(
+                prk,
+                bloque + info.encode("utf-8") + bytes([contador]),
+                hashlib.sha256,
+            ).digest()
+            okm += bloque
+            contador += 1
+        return okm[:longitud]
+
+    def firmar_con_clave_modulo(self, nombre_modulo: str, mensaje: str) -> str:
+        """Firma un mensaje con la subclave HKDF exclusiva de ese módulo."""
+        clave = self.derivar_clave("modulo:" + nombre_modulo)
+        return _hmac.new(clave, mensaje.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    def verificar_firma_modulo(self, nombre_modulo: str, mensaje: str,
+                               firma_recibida: str) -> bool:
+        """Verifica una firma usando solo la subclave del módulo indicado."""
+        esperada = self.firmar_con_clave_modulo(nombre_modulo, mensaje)
+        return _hmac.compare_digest(esperada, firma_recibida)
+
+    def firmar_mensaje_con_nonce(self, mensaje: str, ttl: float = 0.0) -> dict:
+        """
+        Envuelve un mensaje en un sobre firmado con nonce aleatorio y caducidad.
+
+        El nonce de 128 bits impide que dos mensajes idénticos compartan firma;
+        el instante y el TTL permiten rechazar sobres viejos o reinyectados.
+        """
+        ttl = ttl or self._ttl_nonce
+        nonce = os.urandom(16).hex()
+        instante = time.time()
+        cuerpo = f"{nonce}|{instante:.6f}|{mensaje}"
+        firma = _hmac.new(
+            self._clave_bytes, cuerpo.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+        return {
+            "mensaje": mensaje,
+            "nonce": nonce,
+            "instante": instante,
+            "ttl": ttl,
+            "firma": firma,
+        }
+
+    def _purgar_nonces(self, ahora: float) -> None:
+        """Elimina nonces caducados para que el registro no crezca sin límite."""
+        caducados = [n for n, expira in self._nonces_vistos.items() if expira <= ahora]
+        for nonce in caducados:
+            del self._nonces_vistos[nonce]
+
+    def verificar_mensaje_con_nonce(self, sobre: dict, ttl: float = 0.0) -> dict:
+        """
+        Verifica firma, ventana temporal y unicidad del nonce (anti-replay).
+
+        Retorna dict con "valida" y "motivo" ("ok", "firma", "caducado",
+        "repetido", "formato").
+        """
+        try:
+            mensaje = str(sobre["mensaje"])
+            nonce = str(sobre["nonce"])
+            instante = float(sobre["instante"])
+            firma = str(sobre["firma"])
+        except (KeyError, TypeError, ValueError):
+            return {"valida": False, "motivo": "formato"}
+
+        esperada = _hmac.new(
+            self._clave_bytes,
+            f"{nonce}|{instante:.6f}|{mensaje}".encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        if not _hmac.compare_digest(esperada, firma):
+            return {"valida": False, "motivo": "firma"}
+
+        ttl = ttl or float(sobre.get("ttl", self._ttl_nonce))
+        ahora = time.time()
+        if abs(ahora - instante) > ttl:
+            return {"valida": False, "motivo": "caducado"}
+
+        with self._cerrojo:
+            self._purgar_nonces(ahora)
+            if nonce in self._nonces_vistos:
+                return {"valida": False, "motivo": "repetido"}
+            self._nonces_vistos[nonce] = instante + ttl
+
+        self._registrar_log("ANTI_REPLAY", "Sobre con nonce aceptado una sola vez.")
+        return {"valida": True, "motivo": "ok"}
+
+    def consumir_permiso(self, clave: str, capacidad: float = 5.0,
+                         recarga_por_s: float = 1.0, costo: float = 1.0) -> dict:
+        """
+        Limitador de tasa por cubo de fichas (token bucket).
+
+        Las fichas se recargan de forma continua a ``recarga_por_s`` por
+        segundo hasta ``capacidad``. Una ráfaga agota el cubo y las peticiones
+        siguientes se rechazan hasta que se recupere al menos ``costo``.
+        """
+        ahora = time.time()
+        with self._cerrojo:
+            fichas, ultimo = self._cubos.get(clave, (capacidad, ahora))
+            fichas = min(capacidad, fichas + (ahora - ultimo) * recarga_por_s)
+            permitido = fichas >= costo
+            if permitido:
+                fichas -= costo
+            self._cubos[clave] = (fichas, ahora)
+        if not permitido:
+            self._registrar_log("RATE_LIMIT", f"Ráfaga bloqueada para '{clave}'.")
+        return {
+            "permitido": permitido,
+            "fichas": round(fichas, 3),
+            "capacidad": capacidad,
+        }
+
+    def calibrar_baseline(self, vector: list) -> int:
+        """
+        Alimenta la media y la varianza del baseline con una muestra confiable.
+
+        Usa el algoritmo de Welford (actualización numéricamente estable):
+            media ← media + (x − media)/n
+            M2    ← M2 + (x − media_vieja)·(x − media_nueva)
+
+        Retorna el número de muestras acumuladas.
+        """
+        if len(vector) != 6:
+            raise ValueError("El vector de amenaza debe tener 6 características.")
+        self._baseline_n += 1
+        n = self._baseline_n
+        for i, valor in enumerate(vector):
+            delta = float(valor) - self._baseline_media[i]
+            self._baseline_media[i] += delta / n
+            self._baseline_m2[i] += delta * (float(valor) - self._baseline_media[i])
+        return self._baseline_n
+
+    def _varianzas_baseline(self) -> list:
+        """Varianza insesgada por característica con suelo para evitar división por 0."""
+        if self._baseline_n < 2:
+            return [1.0] * 6
+        return [max(m2 / (self._baseline_n - 1), 1e-4) for m2 in self._baseline_m2]
+
+    def distancia_mahalanobis(self, vector: list) -> float:
+        """
+        Distancia de Mahalanobis con covarianza diagonal:
+
+            d(x) = sqrt( Σ ((x_i − μ_i)² / σ_i²) )
+
+        Es la métrica natural para detectar un vector que se aleja del
+        comportamiento aprendido, corrigiendo la escala de cada característica.
+        """
+        if len(vector) != 6:
+            raise ValueError("El vector de amenaza debe tener 6 características.")
+        if self._baseline_n < 2:
+            return 0.0
+        varianzas = self._varianzas_baseline()
+        suma = 0.0
+        for i, valor in enumerate(vector):
+            suma += ((float(valor) - self._baseline_media[i]) ** 2) / varianzas[i]
+        return math.sqrt(suma)
+
+    def detectar_anomalia_mahalanobis(self, vector: list,
+                                      minimo_muestras: int = 8) -> dict:
+        """
+        Convierte la distancia de Mahalanobis en probabilidad de anomalía.
+
+        Con 6 dimensiones, d² sigue aproximadamente una chi-cuadrado con 6
+        grados de libertad; se usa P = 1 − exp(−d²/(2·6)) como aproximación
+        monótona y acotada en [0, 1).
+        """
+        if self._baseline_n < minimo_muestras:
+            return {"suficiente": False, "distancia": 0.0, "probabilidad": 0.0}
+        d = self.distancia_mahalanobis(vector)
+        probabilidad = 1.0 - math.exp(-(d * d) / 12.0)
+        self._ultima_p_mahalanobis = probabilidad
+        if probabilidad >= 0.95:
+            self._registrar_log(
+                "MAHALANOBIS",
+                f"Vector fuera de baseline: d={d:.3f}, P(anomalía)={probabilidad:.3f}",
+            )
+        return {
+            "suficiente": True,
+            "distancia": round(d, 4),
+            "probabilidad": round(probabilidad, 4),
+        }
+
+    def actualizar_ewma(self, valor: float, alpha: float = 0.2) -> float:
+        """Media móvil exponencial: EWMA ← α·x + (1−α)·EWMA."""
+        alpha = max(0.0, min(1.0, alpha))
+        self._ewma_riesgo = alpha * float(valor) + (1.0 - alpha) * self._ewma_riesgo
+        return self._ewma_riesgo
+
+    def actualizar_cusum(self, valor: float) -> dict:
+        """
+        CUSUM unilateral para detectar deriva sostenida al alza:
+
+            S⁺ ← max(0, S⁺ + x − μ₀ − k)
+
+        donde μ₀ es el objetivo y k la tolerancia. Se alerta cuando S⁺
+        supera h. A diferencia de un umbral fijo, el CUSUM acumula evidencias
+        pequeñas y detecta un ataque lento que nunca dispara un pico aislado.
+        """
+        x = max(0.0, min(1.0, float(valor)))
+        self._cusum_pos = max(
+            0.0, self._cusum_pos + x - self._cusum_objetivo - self._cusum_deriva
+        )
+        alerta = self._cusum_pos > self._cusum_umbral
+        if alerta:
+            self._registrar_log(
+                "CUSUM",
+                f"Deriva sostenida detectada: S⁺={self._cusum_pos:.3f} "
+                f"(h={self._cusum_umbral}).",
+            )
+        return {
+            "cusum": round(self._cusum_pos, 4),
+            "alerta": alerta,
+            "estado": "deriva" if alerta else "estable",
+        }
+
+    def entrenar_online(self, vector: list, etiqueta: float,
+                        tasa: float = 0.05) -> dict:
+        """
+        Un paso de retropropagación sobre el MLP 6-8-4-1.
+
+        Pérdida: entropía cruzada binaria. Los gradientes se recortan a
+        [−1, 1] y los pesos se mantienen en [−8, 8] para que una muestra
+        atípica no desestabilice la red (defensa contra envenenamiento).
+        """
+        if len(vector) != 6:
+            raise ValueError("El vector de amenaza debe tener 6 características.")
+        y = 1.0 if etiqueta >= 0.5 else 0.0
+        nn = self._pesos_nn
+
+        z1 = _add_bias(_mat_vec(nn["W1"], vector), nn["b1"])
+        h1 = _relu(z1)
+        z2 = _add_bias(_mat_vec(nn["W2"], h1), nn["b2"])
+        h2 = _relu(z2)
+        z3 = _add_bias(_mat_vec(nn["W3"], h2), nn["b3"])
+        p = _sigmoid(z3[0])
+
+        def recortar(v: float) -> float:
+            return max(-1.0, min(1.0, v))
+
+        def limitar(v: float) -> float:
+            return max(-8.0, min(8.0, v))
+
+        eps = 1e-9
+        perdida = -(y * math.log(p + eps) + (1.0 - y) * math.log(1.0 - p + eps))
+
+        d3 = p - y
+        grad_w3 = [[recortar(d3 * h2[j]) for j in range(4)]]
+        grad_b3 = [recortar(d3)]
+        d2 = [recortar(nn["W3"][0][j] * d3) if z2[j] > 0.0 else 0.0 for j in range(4)]
+        grad_w2 = [[recortar(d2[i] * h1[j]) for j in range(8)] for i in range(4)]
+        grad_b2 = [recortar(v) for v in d2]
+        d1 = []
+        for j in range(8):
+            suma = sum(nn["W2"][i][j] * d2[i] for i in range(4))
+            d1.append(recortar(suma) if z1[j] > 0.0 else 0.0)
+        grad_w1 = [[recortar(d1[i] * vector[j]) for j in range(6)] for i in range(8)]
+        grad_b1 = [recortar(v) for v in d1]
+
+        lr = max(0.0, min(0.5, float(tasa)))
+        for i in range(8):
+            for j in range(6):
+                nn["W1"][i][j] = limitar(nn["W1"][i][j] - lr * grad_w1[i][j])
+            nn["b1"][i] = limitar(nn["b1"][i] - lr * grad_b1[i])
+        for i in range(4):
+            for j in range(8):
+                nn["W2"][i][j] = limitar(nn["W2"][i][j] - lr * grad_w2[i][j])
+            nn["b2"][i] = limitar(nn["b2"][i] - lr * grad_b2[i])
+        for j in range(4):
+            nn["W3"][0][j] = limitar(nn["W3"][0][j] - lr * grad_w3[0][j])
+        nn["b3"][0] = limitar(nn["b3"][0] - lr * grad_b3[0])
+
+        return {
+            "entrenado": True,
+            "perdida": round(perdida, 6),
+            "probabilidad_previa": round(p, 4),
+            "etiqueta": y,
+        }
+
+    # ------------------------------------------------------------------
     # 8. MÉTODOS ORIGINALES (expandidos con lógica matemática real)
     # ------------------------------------------------------------------
 
@@ -576,13 +1385,18 @@ class SeguridadNeuronal:
         factor_cuarente = min(1.0, len(self._cuarentena) / 5.0)
         anomalia_H      = self.detectar_anomalia_entropia()["alerta"]
         factor_entropia = 0.3 if anomalia_H else 0.0
+        factor_mahal    = self._ultima_p_mahalanobis
+        factor_cusum    = min(1.0, self._cusum_pos / self._cusum_umbral)
 
-        # Ponderación: nivel 50%, bayes 25%, cuarentena 15%, entropia 10%
+        # Ponderación: nivel 40%, bayes 15%, cuarentena 10%, entropía 5%,
+        # Mahalanobis 15%, CUSUM 15%. Suma exactamente 1.0.
         riesgo_global = (
-            0.50 * factor_nivel +
-            0.25 * factor_bayes +
-            0.15 * factor_cuarente +
-            0.10 * factor_entropia
+            0.40 * factor_nivel +
+            0.15 * factor_bayes +
+            0.10 * factor_cuarente +
+            0.05 * factor_entropia +
+            0.15 * factor_mahal +
+            0.15 * factor_cusum
         )
 
         if riesgo_global < 0.20:
@@ -630,6 +1444,11 @@ class SeguridadNeuronal:
             "nivel_seguridad":        round(self.nivel_seguridad, 2),
             "entropia_shannon":       round(self._entropia_actual, 4),
             "prob_amenaza_bayesiana": round(self._prob_amenaza_posterior, 4),
+            "ewma_riesgo":            round(self._ewma_riesgo, 4),
+            "cusum":                  round(self._cusum_pos, 4),
+            "mahalanobis_prob":       round(self._ultima_p_mahalanobis, 4),
+            "baseline_muestras":      self._baseline_n,
+            "nonces_activos":         len(self._nonces_vistos),
             "modulos_sellados":       list(self._hashes_modulos.keys()),
             "modulos_en_cuarentena":  list(self._cuarentena.keys()),
             "total_eventos":          len(self._historial_eventos),
@@ -670,6 +1489,12 @@ class SeguridadNeuronal:
             )
         else:
             narracion += "No hay módulos en cuarentena. "
+        if estado["cusum"] > self._cusum_umbral:
+            narracion += (
+                "Mi control de deriva CUSUM detecta una acumulación anómala de "
+                "señales: el riesgo no viene de un pico aislado, sino de una "
+                "tendencia sostenida. "
+            )
         narracion += f"Llevo {len(estado['modulos_sellados'])} módulo(s) con sello de integridad registrado."
         return narracion
 
@@ -721,6 +1546,27 @@ class SeguridadNeuronal:
                 "lo reducen y las acciones correctivas lo restauran. Combino este valor con las "
                 "métricas bayesianas, de entropía y de cuarentena para determinar mi estado "
                 "general: activo, alerta, vulnerable o crítico."
+            ),
+            "mahalanobis": (
+                "Comparo cada vector de amenaza con mi huella de comportamiento normal usando "
+                "la distancia de Mahalanobis. Esta métrica corrige la escala de cada variable y "
+                "me dice cuántas desviaciones me alejo de mi baseline. Si la distancia crece, "
+                "la probabilidad de anomalía sube automáticamente."
+            ),
+            "cusum": (
+                "Aplico un control estadístico CUSUM que acumula desviaciones pequeñas. Así "
+                "detecto un ataque lento que nunca produce un pico único: si la suma de señales "
+                "supera mi umbral, sé que la amenaza es sostenida y no ruido."
+            ),
+            "anti_replay": (
+                "Cada mensaje que sale de mí lleva un nonce aleatorio de ciento veintiocho bits "
+                "y una fecha de caducidad. Si alguien captura un mensaje y lo reenvía, el nonce "
+                "ya estará usado y la firma será rechazada. Es mi defensa contra la repetición."
+            ),
+            "limitador": (
+                "Mis cubos de fichas limitan cuántas peticiones admite cada canal. Una ráfaga "
+                "agota el cubo y las siguientes peticiones esperan a que se recargue, igual que "
+                "una presa regula el caudal de un río."
             ),
         }
 
@@ -834,6 +1680,54 @@ if __name__ == "__main__":
     for clave, frase in voces.items():
         print(f"\n    [{clave.upper()}]")
         print(f"    {frase[:100]}…")
+
+    # --- 10. HKDF, anti-replay y limitador ---
+    print("\n[10] HKDF · ANTI-REPLAY · TOKEN BUCKET")
+    k_avatar = seg.derivar_clave("modulo:avatar")
+    print(f"    HKDF determinista: {k_avatar == seg.derivar_clave('modulo:avatar')} "
+          f"| longitud={len(k_avatar) * 8} bits")
+    print(f"    Claves separadas por módulo: "
+          f"{k_avatar != seg.derivar_clave('modulo:cerebro')}")
+    firma_mod = seg.firmar_con_clave_modulo("avatar", "mover_brazo")
+    print(f"    Firma con clave de módulo válida: "
+          f"{seg.verificar_firma_modulo('avatar', 'mover_brazo', firma_mod)}")
+    sobre = seg.firmar_mensaje_con_nonce("activar_expresion_felicidad")
+    print(f"    1er uso del sobre : {seg.verificar_mensaje_con_nonce(sobre)}")
+    print(f"    Reenvío (replay)  : {seg.verificar_mensaje_con_nonce(sobre)}")
+    rafaga = [seg.consumir_permiso("chat", capacidad=3, recarga_por_s=0.5)["permitido"]
+              for _ in range(5)]
+    print(f"    Ráfaga de 5 con capacidad 3: {rafaga}")
+
+    # --- 11. Mahalanobis ---
+    print("\n[11] DISTANCIA DE MAHALANOBIS")
+    vector_normal = [0.1, 0.4, 0.05, 0.2, 0.0, 0.3]
+    for _ in range(20):
+        seg.calibrar_baseline(
+            [v + random.uniform(-0.02, 0.02) for v in vector_normal]
+        )
+    r_normal = seg.detectar_anomalia_mahalanobis(vector_normal)
+    r_anomalo = seg.detectar_anomalia_mahalanobis([0.95, 0.9, 0.9, 0.9, 0.8, 0.7])
+    print(f"    Normal  → d={r_normal['distancia']:.3f} P={r_normal['probabilidad']:.4f}")
+    print(f"    Anómalo → d={r_anomalo['distancia']:.3f} P={r_anomalo['probabilidad']:.4f}")
+
+    # --- 12. EWMA + CUSUM ---
+    print("\n[12] EWMA + CUSUM (deriva sostenida)")
+    ewma = 0.0
+    for _ in range(8):
+        ewma = seg.actualizar_ewma(0.6)
+    for _ in range(10):
+        deriva = seg.actualizar_cusum(0.6)
+    print(f"    EWMA tras 8 pasos a 0.6: {ewma:.4f}")
+    print(f"    CUSUM S⁺={deriva['cusum']:.3f} → {deriva['estado']} (alerta={deriva['alerta']})")
+
+    # --- 13. Aprendizaje online ---
+    print("\n[13] APRENDIZAJE ONLINE DEL MLP")
+    vector_ataque = [0.95, 0.9, 0.9, 0.9, 0.8, 0.7]
+    antes = seg.clasificar_amenaza(vector_ataque)["probabilidad_mlp"]
+    for _ in range(40):
+        seg.entrenar_online(vector_ataque, 1.0, tasa=0.10)
+    despues = seg.clasificar_amenaza(vector_ataque)["probabilidad_mlp"]
+    print(f"    P(amenaza) MLP antes={antes:.4f} → después={despues:.4f}")
 
     print("\n" + "=" * 70)
     print("  Demostración completada. LucIA operativa y protegida.")

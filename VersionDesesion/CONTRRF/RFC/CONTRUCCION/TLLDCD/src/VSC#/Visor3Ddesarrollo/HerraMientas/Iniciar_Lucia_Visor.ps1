@@ -22,10 +22,12 @@ if (-not $src) {
 
 # El Python privado del taller permanece fuera del .exe; nunca usa el Python del sistema.
 $devDir = if ($src) {
+    # Cada ruta va en su propia linea: con PowerShell 5.1 una coma final
+    # convierte el siguiente Join-Path en parte de ChildPath y rompe el script.
     $candidatosDev = @(
-        Join-Path (Split-Path (Split-Path $src -Parent) -Parent) ".dev",
-        Join-Path (Split-Path $src -Parent) ".dev",
-        Join-Path $PSScriptRoot "..\..\..\..\..\.dev"
+        (Join-Path (Split-Path (Split-Path $src -Parent) -Parent) ".dev")
+        (Join-Path (Split-Path $src -Parent) ".dev")
+        (Join-Path $PSScriptRoot "..\..\..\..\..\.dev")
     )
     $encontrado = ""
     foreach ($c in $candidatosDev) {
@@ -47,15 +49,19 @@ $logDir = Join-Path $env:LOCALAPPDATA "WoldVirtualP2P3D\logs"
 New-Item -ItemType Directory -Force -Path $logDir -ErrorAction SilentlyContinue | Out-Null
 $log = Join-Path $logDir "lucia_ps.log"
 
-if (-not (Test-Path $py)) {
+if ([string]::IsNullOrWhiteSpace($py) -or -not (Test-Path $py)) {
     "No se encontró el Python privado de LucIA (.dev)." | Set-Content -LiteralPath "$log.err"
     exit 2
 }
-if (-not (Test-Path $srv)) {
+if ([string]::IsNullOrWhiteSpace($srv) -or -not (Test-Path $srv)) {
     "No se encontró servidor_lucia.py en el árbol activo." | Set-Content -LiteralPath "$log.err"
     exit 3
 }
 
 # Esta opción válida omite la precarga del modelo y deja activa la voz.
 $child = Start-Process -FilePath $py -ArgumentList @("`"$srv`"", "--modelo", "qwen2.5:7b", "--puerto", "8765", "--sin-precalentar", "--sin-precarga-voz") -WorkingDirectory (Split-Path $srv) -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+if (-not $child) {
+    "No se pudo iniciar el proceso de LucIA." | Set-Content -LiteralPath "$log.err"
+    exit 4
+}
 exit $child.ExitCode

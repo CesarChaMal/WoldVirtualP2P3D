@@ -115,7 +115,7 @@ func _montar_senalizacion() -> void:
 		toro.ring_segments = 8
 		halo.mesh = toro
 		halo.material_override = material
-		halo.position = Vector3(0.0, 0.32, 0.0)
+		halo.position = Vector3(0.0, 0.03, 0.0)
 		marcador.add_child(halo)
 
 		var baliza := MeshInstance3D.new()

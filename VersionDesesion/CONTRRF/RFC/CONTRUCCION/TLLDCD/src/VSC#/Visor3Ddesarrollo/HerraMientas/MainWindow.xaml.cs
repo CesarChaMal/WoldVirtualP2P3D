@@ -1647,15 +1647,16 @@ namespace Visor3D
                     string dataDir = !string.IsNullOrWhiteSpace(_rutaDatosGodot)
                         ? _rutaDatosGodot : PerfilUsuario.GodotUserDataDir;
                     bool recepcionSolicitada = File.Exists(Path.Combine(dataDir, "abrir_recepcion.flag"));
-                    if (cuentaLocalCompleta && !recepcionSolicitada)
+                    // El botón «Oficina de Lucía 3D» debe abrir el alta nueva de la
+                    // DAO. Sin `--sin-recepcion`, Boot ve la marca y monta el
+                    // onboarding DAO en vez de la recepción antigua.
+                    if (recepcionSolicitada)
+                        userArgs = "--dao-lobby";
+                    else if (cuentaLocalCompleta)
                         userArgs = "--sin-recepcion --dao-lobby";
 #if GODOT_SOURCE_PREVIEW
-                    if (string.IsNullOrWhiteSpace(_urlAmigoPendiente))
-                    {
-                        userArgs = cuentaLocalCompleta
-                            ? "--sin-recepcion --dao-lobby"
-                            : "--sin-recepcion --dao-lobby --dao-preview";
-                    }
+                    else if (string.IsNullOrWhiteSpace(_urlAmigoPendiente))
+                        userArgs = "--sin-recepcion --dao-lobby --dao-preview";
 #endif
                     string rolLog = "";
                     if (!string.IsNullOrWhiteSpace(_urlAmigoPendiente))

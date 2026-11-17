@@ -1,11 +1,14 @@
 extends Node
-## Arranca primero para montar la base 2.8.6 antes de cargar autoloads y la escena.
-## El PCK principal de 2.8.7 contiene solo el delta DAO y tiene prioridad sobre la base.
+## Arranca primero para montar la base 2.8.6 cuando el PCK principal es un delta.
+## La build 2.8.7 lleva el mundo completo y no define WOLD_BASE_PCK: el arranque sigue igual.
 
 func _init() -> void:
 	var ruta_base := OS.get_environment("WOLD_BASE_PCK").strip_edges()
-	if ruta_base.is_empty() or not FileAccess.file_exists(ruta_base):
-		push_error("[DAOBasePackLoader] No se encontró el PCK base 2.8.6: " + ruta_base)
+	# La 2.8.7 lleva el mundo completo: sin base es un arranque normal, no un error.
+	if ruta_base.is_empty():
+		return
+	if not FileAccess.file_exists(ruta_base):
+		push_error("[DAOBasePackLoader] No se encontró el PCK base: " + ruta_base)
 		return
 
 	if not ProjectSettings.load_resource_pack(ruta_base, false):

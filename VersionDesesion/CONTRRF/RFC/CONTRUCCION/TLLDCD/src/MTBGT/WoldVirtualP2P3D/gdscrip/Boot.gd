@@ -1,8 +1,9 @@
 extends Node3D
 ## Arranque del metaverso (demo local, discusión #86):
-## 0. RECEPCIÓN LUCIA: crea la cuenta (un bloque = un hash) o saluda al que ya la
-##    tiene en este PC. No hay contraseña, ni semilla, ni validación de túnel.
-## 1. ALTA EN LA DAO: el nuevo ciudadano recorre el despacho de LucIA, la plaza
+## 0. RECEPCIÓN EN LA DAO: LucIA recibe en su despacho. Allí se crea la cuenta
+##    (un bloque = un hash) o se saluda al que ya la tiene en este PC. No hay
+##    contraseña, ni semilla, ni validación de túnel.
+## 1. ALTA EN LA DAO: el ciudadano recorre el despacho de LucIA, la plaza
 ##    de registro, el carrusel, el espejo del avatar y el portal.      [solo alta]
 ## 2. Ventana de carga hasta que aparece MI isla, ya registrada por el portal.
 ## 3. Se cierra la carga y queda el mundo jugable en su isla.
@@ -18,7 +19,6 @@ const PORTAL_SCENE: PackedScene = preload("res://ESCENAS/sceneOPTM/constructor/U
 const MUNDO_SCENE: PackedScene = preload("res://ESCENAS/sceneOPTM/constructor/chunk3DBLOCK/ISLA3Dblock.tscn")
 const Sonda = preload("res://gdscrip/Sonda.gd")
 const Turnos = preload("res://gdscrip/Turnos.gd")
-const LuciaRecepcion = preload("res://gdscrip/LuciaRecepcion.gd")
 const Firma = preload("res://gdscrip/AvatarFirma.gd")
 const Pers = preload("res://gdscrip/Personalizacion.gd")
 const Catalogo = preload("res://avatares/CatalogoAvatares.gd")
@@ -30,7 +30,6 @@ var _editor_aspecto: Node3D
 var _registro: Control
 var _zona_portal: Node3D
 var _mundo: Node3D
-var _recepcion: Node3D
 var _onboarding: Node3D
 var _carga: CanvasLayer
 var _carga_label: Label
@@ -75,12 +74,14 @@ func _ready() -> void:
 				OS.get_user_data_dir().path_join("registro.cfg"))
 		DirAccess.remove_absolute(reset_flag_path)
 
-	# «Actualización de cuenta» desde el visor: este arranque ya entra en la
-	# recepción de LucIA, así que solo se consume la marca y se deja constancia.
+	# «Oficina de Lucía 3D» desde el visor: el botón pide reabrir el alta para
+	# actualizar cuenta/avatar. La marca abre la recepción de la DAO de forma
+	# determinista, sin pasar por la antigua ventana de recepción.
 	var marca_cuenta := OS.get_user_data_dir().path_join("abrir_recepcion.flag")
-	if FileAccess.file_exists(marca_cuenta):
+	var recepcion_solicitada := FileAccess.file_exists(marca_cuenta)
+	if recepcion_solicitada:
 		DirAccess.remove_absolute(marca_cuenta)
-		print("[Boot] Actualización de cuenta solicitada desde el visor")
+		print("[Boot] Oficina de Lucía solicitada desde el visor: alta en la DAO")
 
 	# La sonda existe en todos los peers: el anfitrion responde consultas de
 	# plazas y el invitado pregunta antes del carrusel.
@@ -98,6 +99,17 @@ func _ready() -> void:
 		_entrar_a_isla()
 		return
 
+	# El botón «Oficina de Lucía 3D» reabre el alta nueva dentro de la DAO.
+	# Ignora la marca de alta completada para que el ciudadano pueda volver a
+	# pasar por el carrusel y actualizar su avatar o su cuenta.
+	if recepcion_solicitada:
+		if FileAccess.file_exists(onboarding_dao_completado):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(onboarding_dao_completado))
+		_iniciar_en_dao = true
+		_cargar_nick_guardado()
+		_mostrar_onboarding()
+		return
+
 	# El onboarding de la DAO ya guardó nick y avatar antes de cargar este mundo.
 	# Consumir la marca evita volver a pedir recepción y continúa con el reparto
 	# normal del ChunkManager.
@@ -107,8 +119,8 @@ func _ready() -> void:
 		_continuar_registrado()
 		return
 
-	# LucIA recibe SIEMPRE primero (anfitriona): saluda al registrado y le dice
-	# cómo iniciar sesión en esta versión, o guía el registro del nuevo.
+	# LucIA recibe SIEMPRE primero (anfitriona), pero la recepción vive en su
+	# despacho de la DAO: saludar o crear la cuenta es el arranque del alta.
 	#
 	# Excepción de autoprueba: el visor ejecuta el motor sin nadie delante y
 	# necesita que la isla y el 8911 arranquen. Solo `--startup-selftest` pasa
@@ -118,7 +130,9 @@ func _ready() -> void:
 		_continuar_registrado()
 		return
 
-	_mostrar_lucia_recepcion()
+	print("[Boot] Recepción de LucIA en la DAO: alta en su despacho")
+	_cargar_nick_guardado()
+	_mostrar_onboarding()
 
 
 ## ¿Arranca para la autoprueba del visor (sin recepción)?
@@ -193,28 +207,6 @@ func _process(delta: float) -> void:
 	_carga_label.text = _carga_texto + ".".repeat(puntos)
 
 
-func _mostrar_lucia_recepcion() -> void:
-	_recepcion = LuciaRecepcion.new()
-	_recepcion.name = "LuciaRecepcion"
-	add_child(_recepcion)
-	_recepcion.recepcion_completada.connect(_on_recepcion_completada)
-
-
-func _on_recepcion_completada(modo: String) -> void:
-	# El nick sale de la cuenta (hash del bloque), no de un segundo formulario.
-	if _recepcion and _recepcion.has_method("nick_cuenta"):
-		var nick := str(_recepcion.call("nick_cuenta")).strip_edges()
-		if not nick.is_empty():
-			_nick = nick
-	if _recepcion:
-		_recepcion.queue_free()
-		_recepcion = null
-	if modo == "existente":
-		_continuar_registrado()
-	else:
-		_mostrar_onboarding()
-
-
 ## El alta completa se vive dentro de la DAO (despacho, plaza, carrusel, espejo
 ## y portal). Antes de montar el mundo se libera la DAO del alta: la del mundo
 ## es la única copia viva de la isla.
@@ -254,6 +246,17 @@ func _on_onboarding_completado(avatar_scene: String) -> void:
 	await get_tree().process_frame
 	_entrar_a_isla()
 
+
+
+## Nick del perfil local para reabrir el alta sin volver a pedirlo.
+func _cargar_nick_guardado() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load("user://registro.cfg") == OK:
+		_nick = str(cfg.get_value("jugador", "nick", "")).strip_edges()
+	if _nick.is_empty() and FileAccess.file_exists("user://cuenta.json"):
+		var datos = JSON.parse_string(FileAccess.get_file_as_string("user://cuenta.json"))
+		if typeof(datos) == TYPE_DICTIONARY:
+			_nick = str(datos.get("nick", "")).strip_edges()
 
 
 ## Un jugador ya registrado entra a su isla con el avatar guardado.
@@ -640,9 +643,10 @@ func _mostrar_aviso(texto: String) -> void:
 	etiqueta.add_theme_font_size_override("font_size", 18)
 	etiqueta.add_theme_color_override("font_color", Color(0.82, 0.94, 1.0, 1.0))
 	panel.add_child(etiqueta)
+	# CanvasLayer no tiene modulate: se desvanece el panel y después se libera la capa.
 	var tw := create_tween()
 	tw.tween_interval(7.0)
-	tw.tween_property(capa, "modulate:a", 0.0, 1.0)
+	tw.tween_property(panel, "modulate:a", 0.0, 1.0)
 	tw.tween_callback(capa.queue_free)
 
 

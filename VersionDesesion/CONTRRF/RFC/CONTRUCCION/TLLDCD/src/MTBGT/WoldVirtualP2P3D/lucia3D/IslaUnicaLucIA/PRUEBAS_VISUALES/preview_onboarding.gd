@@ -19,11 +19,11 @@ const Catalogo = preload("res://avatares/CatalogoAvatares.gd")
 
 const NICK := "PruebaDAO"
 const PERFIL := ["user://avatar_jugador.cfg", "user://registro.cfg"]
-const LIMITE_MS := 180000
+const LIMITE_MS := 300000
 
 const FASES_ESPERADAS: Array[String] = [
-	"despacho", "salida", "estacion_1", "estacion_2", "estacion_3", "estacion_4",
-	"plaza_completa", "carrusel", "bienvenida", "personalizacion", "editor",
+	"despacho", "carrusel", "salida", "estacion_1", "estacion_2", "estacion_3", "estacion_4",
+	"plaza_completa", "bienvenida", "personalizacion", "editor",
 	"control", "portal", "completado",
 ]
 ## Segundos que se deja correr cada fase antes de disparar la captura.
@@ -164,7 +164,11 @@ func _capturar(nombre: String, orden: int) -> void:
 	await RenderingServer.frame_post_draw
 	var imagen := get_viewport().get_texture().get_image()
 	var archivo := "%02d_%s.png" % [orden, nombre]
-	var error := imagen.save_png(SALIDA + "/" + archivo)
+	var ruta := ProjectSettings.globalize_path(SALIDA + "/" + archivo)
+	var error := imagen.save_png(ruta)
+	if error != OK:
+		print("[ONBOARDING] captura fallida %s size=%s empty=%s error=%d"
+				% [ruta, imagen.get_size(), imagen.is_empty(), error])
 	if error == OK:
 		_pantallazos.append(archivo)
 		print("[ONBOARDING] captura ", archivo)

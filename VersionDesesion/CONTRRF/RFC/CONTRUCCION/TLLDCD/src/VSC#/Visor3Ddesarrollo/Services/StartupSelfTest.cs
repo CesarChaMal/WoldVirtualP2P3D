@@ -41,11 +41,14 @@ namespace Visor3D.Services
                 bool tieneMotor = Array.Exists(recursos, n => n.EndsWith("godot_exe.zip", StringComparison.OrdinalIgnoreCase));
                 bool tieneVolatil = Array.Exists(recursos, n => n.EndsWith("actualizacion_volatil.zip", StringComparison.OrdinalIgnoreCase));
                 bool tienePatch = Array.Exists(recursos, n => n.EndsWith("dao_patch.pck", StringComparison.OrdinalIgnoreCase));
+                bool tienePck = Array.Exists(recursos, n => n.EndsWith("wvp3d.pck", StringComparison.OrdinalIgnoreCase));
                 bool modoDelta = tienePatch;
-                bool tienePaqueteMundo = modoDelta ? tienePatch : tieneVolatil;
-                Check("Recursos embebidos (motor + " + (modoDelta ? "parche DAO" : "paquete volátil") + ")",
+                bool modoCompleto = tienePck && !tienePatch;
+                bool tienePaqueteMundo = tienePatch || tieneVolatil || tienePck;
+                string etiquetaPaquete = modoDelta ? "parche DAO" : (modoCompleto ? "mundo completo" : "paquete volátil");
+                Check("Recursos embebidos (motor + " + etiquetaPaquete + ")",
                       tieneMotor && tienePaqueteMundo,
-                      $"motor={tieneMotor} patch={tienePatch} volatil={tieneVolatil}");
+                      $"motor={tieneMotor} patch={tienePatch} pck={tienePck} volatil={tieneVolatil}");
 
                 if (!tieneMotor || !tienePaqueteMundo)
                     return Cerrar(salida, fallos);
@@ -62,6 +65,10 @@ namespace Visor3D.Services
                     bool baseDisponible = DeltaPackManager.EnsureBasePackAvailable();
                     Check("Base original 2.8.6 disponible", baseDisponible,
                           baseDisponible ? Tamano(DeltaPackManager.BasePckPath) : DeltaPackManager.BasePckPath);
+                }
+                else if (modoCompleto)
+                {
+                    Check("Mundo completo extraído", File.Exists(AppExtractor.PckPath), Tamano(AppExtractor.PckPath));
                 }
                 else
                 {
@@ -206,7 +213,7 @@ namespace Visor3D.Services
             // El mundo sólo carga si user://registro.cfg trae avatar y nick; sin eso
             // Boot.gd se queda en el carrusel esperando a que alguien elija y nunca
             // abre la isla ni el 8911. Por eso la prueba usa un perfil de usar y
-            // tirar bajo %TEMP%: así no depende del perfil del equipo ni lo toca,
+            // tirar en el directorio de pruebas: así no depende del perfil del equipo ni lo toca,
             // y un p2p_session.json real no la convierte en cliente remoto.
             string perfil = Path.Combine(raizPruebas, "startup-selftest", "perfil_" + Guid.NewGuid().ToString("N"));
             string datos = Path.Combine(perfil, "Godot", "app_userdata", "WoldVirtualP2P3D");
@@ -224,8 +231,10 @@ namespace Visor3D.Services
                 : Visor3D.CargaVolatil.VolatilePackage.PckVolatilPath ?? AppExtractor.PckPath);
             psi.ArgumentList.Add("--log-file");
             psi.ArgumentList.Add(log);
+            // El mundo completo son 509 MiB: la isla necesita más de un puñado de
+            // iteraciones para montarse en headless antes de que el motor salga.
             psi.ArgumentList.Add("--quit-after");
-            psi.ArgumentList.Add("3000");
+            psi.ArgumentList.Add("15000");
             psi.ArgumentList.Add("--");
             psi.ArgumentList.Add("--server");
             // LucIA recibe siempre a una persona; la prueba no la tiene. Con este
@@ -248,7 +257,7 @@ namespace Visor3D.Services
                 Directory.CreateDirectory(datos);
                 File.WriteAllText(Path.Combine(datos, "registro.cfg"),
                     "[jugador]\n\n" +
-                    "avatar_scene=\"res://SLCAV/AVATARESCONANIMACION/USERBS/sceneuserBS/AVHMBSC/AVH1Ch3D.tscn\"\n" +
+                    "avatar_scene=\"res://avatares/AVH1.tscn\"\n" +
                     "nick=\"Prueba\"\n");
             }
             catch (Exception ex)
@@ -275,9 +284,14 @@ namespace Visor3D.Services
                 }
 
                 string texto = File.Exists(log) ? File.ReadAllText(log) : "";
-                bool mundo = texto.Contains("Isla 0 preparada") || texto.Contains("isla", StringComparison.OrdinalIgnoreCase);
+                // Godot 4.7 en Windows registra este ERROR cuando no puede leer el
+                // almacén de certificados del sistema; no afecta al mundo ni a la red.
+                string sinAvisoCertificados = texto.Replace(
+                    "ERROR: Failed to read the root certificate store.", "");
+                bool mundo = texto.Contains("Isla 0 preparada");
                 bool red = texto.Contains("Servidor WebSocket activo");
-                bool errores = texto.Contains("ERROR:") || texto.Contains("SCRIPT ERROR");
+                bool errores = sinAvisoCertificados.Contains("ERROR:") ||
+                               texto.Contains("SCRIPT ERROR");
                 check("Motor arranca desde el PCK", proceso.ExitCode == 0 && mundo && red && !errores,
                       $"exit={proceso.ExitCode} isla={mundo} red={red} errores={errores} perfil={perfil}");
             }
