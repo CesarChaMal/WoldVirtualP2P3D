@@ -4272,6 +4272,7 @@ namespace Visor3D
                                 System.Windows.Media.Color.FromRgb(34, 197, 94));
                             try { Clipboard.SetText(pubUrl); } catch { }
                         });
+                        EscribirResultadoValidacion(true, $"Túnel WebNodo activo: {pubUrl}");
                         return;
                     }
                 }
@@ -4309,6 +4310,7 @@ namespace Visor3D
                                 System.Windows.Media.Color.FromRgb(34, 197, 94));
                             try { Clipboard.SetText(pubUrl); } catch { }
                         });
+                        EscribirResultadoValidacion(true, $"Túnel WebNodo activo: {pubUrl}");
                         return;
                     }
                 }
@@ -4572,6 +4574,25 @@ namespace Visor3D
                 });
 
                 File.WriteAllText(rutaResultado, json);
+
+                // Compatibilidad v2.9.3: escribir también user://tunel_lucia_url.json
+                // para que LuciaRecepcion.gd reciba la URL del túnel en vivo
+                var rutaTunelLucia = Path.Combine(_rutaDatosGodot, "tunel_lucia_url.json");
+                string pubUrl = _urlPublica ?? App.WebNodo.PublicTunnelUrl ?? (_p2pServicio != null ? _p2pServicio.UrlPublicaPropia : null) ?? "";
+                var datosTunel = new
+                {
+                    exito = exito,
+                    url = pubUrl,
+                    mensaje = mensaje,
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                };
+                var jsonTunel = System.Text.Json.JsonSerializer.Serialize(datosTunel, new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+                string tempTunel = rutaTunelLucia + ".tmp";
+                File.WriteAllText(tempTunel, jsonTunel);
+                File.Move(tempTunel, rutaTunelLucia, overwrite: true);
             }
             catch (Exception ex)
             {

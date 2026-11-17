@@ -294,30 +294,46 @@ func _montar_formulario() -> void:
 	_actualizar_guia()
 
 
-## Botón «CONECTAR» de la oficina: valida la conexión P2P/túnel con el visor.
+## Botón «CONECTAR» de la oficina: muestra el estado del túnel efímero de LucIA.
+## Lucía es el HOST: el visor C# arranca el túnel al iniciar y escribe
+## user://tunel_lucia_url.json con la URL pública. Aquí sólo se lee y muestra.
 func _montar_conexion() -> void:
 	var raiz := _capa.get_child(0) as Control
 	if raiz == null:
 		return
+
+	# Estilo visual del botón CONECTAR: fondo azul oscuro, texto grande
+	var estilo_normal := StyleBoxFlat.new()
+	estilo_normal.bg_color = Color(0.08, 0.18, 0.38, 0.95)
+	estilo_normal.border_color = Color(0.35, 0.65, 1.0, 0.9)
+	estilo_normal.set_border_width_all(2)
+	estilo_normal.set_corner_radius_all(10)
+	estilo_normal.content_margin_left = 14.0
+	estilo_normal.content_margin_right = 14.0
+	estilo_normal.content_margin_top = 8.0
+	estilo_normal.content_margin_bottom = 8.0
+
 	_boton_conectar = Button.new()
-	_boton_conectar.text = "🔗 CONECTAR"
-	_boton_conectar.add_theme_font_size_override("font_size", 17)
+	_boton_conectar.text = "CONECTAR"
+	_boton_conectar.add_theme_font_size_override("font_size", 20)
+	_boton_conectar.add_theme_color_override("font_color", Color(0.9, 0.97, 1.0, 1.0))
+	_boton_conectar.add_theme_stylebox_override("normal", estilo_normal)
 	_boton_conectar.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_boton_conectar.offset_left = -230.0
+	_boton_conectar.offset_left = -240.0
 	_boton_conectar.offset_right = -34.0
 	_boton_conectar.offset_top = 64.0
-	_boton_conectar.offset_bottom = 108.0
+	_boton_conectar.offset_bottom = 112.0
 	_boton_conectar.pressed.connect(_solicitar_conexion)
 	raiz.add_child(_boton_conectar)
 
-	_estado_conexion = _etiqueta("Sin conexión validada", 13, Color(0.25, 1.0, 0.62, 1.0), 3)
+	_estado_conexion = _etiqueta("Esperando túnel de LucIA…", 13, Color(0.55, 0.85, 1.0, 1.0), 3)
 	_estado_conexion.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_estado_conexion.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_estado_conexion.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_estado_conexion.offset_left = -360.0
+	_estado_conexion.offset_left = -380.0
 	_estado_conexion.offset_right = -34.0
-	_estado_conexion.offset_top = 112.0
-	_estado_conexion.offset_bottom = 164.0
+	_estado_conexion.offset_top = 116.0
+	_estado_conexion.offset_bottom = 172.0
 	raiz.add_child(_estado_conexion)
 
 	_timer_conexion = Timer.new()
@@ -330,26 +346,36 @@ func _montar_conexion() -> void:
 func _solicitar_conexion() -> void:
 	if _boton_conectar == null:
 		return
-	var datos := {
-		"accion": "conectar",
-		"origen": "oficina_lucia",
-		"timestamp": Time.get_datetime_string_from_system(),
-	}
-	var archivo := FileAccess.open("user://tunel_solicitud.json", FileAccess.WRITE)
-	if archivo == null:
-		_estado_conexion.text = "No se pudo pedir la conexión al visor."
+	# Leer user://tunel_lucia_url.json escrito por LucIAValidacionManager.cs
+	var ruta := "user://tunel_lucia_url.json"
+	if not FileAccess.file_exists(ruta):
+		_estado_conexion.text = "LucIA está iniciando el túnel…"
+		_boton_conectar.text = "CONECTANDO…"
+		_boton_conectar.disabled = true
 		return
-	archivo.store_string(JSON.stringify(datos))
-	archivo.close()
-	_boton_conectar.disabled = true
-	_boton_conectar.text = "CONECTANDO…"
-	_estado_conexion.text = "Validando conexión P2P con LucIA…"
+	var datos = JSON.parse_string(FileAccess.get_file_as_string(ruta))
+	if typeof(datos) != TYPE_DICTIONARY:
+		_estado_conexion.text = "⚠️ Respuesta del túnel ilegible."
+		return
+	var exito := bool(datos.get("exito", false))
+	var mensaje := str(datos.get("mensaje", ""))
+	var url    := str(datos.get("url", ""))
+	if exito:
+		_aplicar_estilo_conectado()
+		_estado_conexion.text = "✅ " + (mensaje if not mensaje.is_empty() else "Túnel WebNodo activo: " + url)
+		_boton_conectar.text = "CONECTADO"
+		_boton_conectar.disabled = true
+	else:
+		_estado_conexion.text = "⚠️ " + (mensaje if not mensaje.is_empty() else "Túnel no disponible aún.")
+		_boton_conectar.text = "REINTENTAR"
+		_boton_conectar.disabled = false
 
 
 func _poll_conexion() -> void:
 	if _estado_conexion == null:
 		return
-	var ruta := "user://validacion_resultado.json"
+	# Monitorear user://tunel_lucia_url.json (escrito por LucIAValidacionManager.cs)
+	var ruta := "user://tunel_lucia_url.json"
 	if not FileAccess.file_exists(ruta):
 		return
 	var marca := FileAccess.get_modified_time(ruta)
@@ -359,11 +385,35 @@ func _poll_conexion() -> void:
 	var datos = JSON.parse_string(FileAccess.get_file_as_string(ruta))
 	if typeof(datos) != TYPE_DICTIONARY:
 		return
-	var exito := bool(datos.get("exito", false))
+	var exito  := bool(datos.get("exito", false))
 	var mensaje := str(datos.get("mensaje", ""))
-	_estado_conexion.text = ("✅ " if exito else "⚠️ ") + mensaje
-	_boton_conectar.disabled = exito
-	_boton_conectar.text = "CONECTADO" if exito else "REINTENTAR"
+	var url    := str(datos.get("url", ""))
+	if exito:
+		_aplicar_estilo_conectado()
+		_estado_conexion.text = "✅ " + (mensaje if not mensaje.is_empty() else "Túnel WebNodo activo: " + url)
+		_boton_conectar.disabled = true
+		_boton_conectar.text = "CONECTADO"
+	else:
+		_estado_conexion.text = "⚠️ " + (mensaje if not mensaje.is_empty() else "Túnel caído.")
+		_boton_conectar.disabled = false
+		_boton_conectar.text = "REINTENTAR"
+
+
+## Aplica el estilo visual «conectado» al botón: fondo verde-azulado.
+func _aplicar_estilo_conectado() -> void:
+	if _boton_conectar == null:
+		return
+	var estilo_ok := StyleBoxFlat.new()
+	estilo_ok.bg_color = Color(0.05, 0.38, 0.32, 0.97)
+	estilo_ok.border_color = Color(0.25, 0.9, 0.72, 0.9)
+	estilo_ok.set_border_width_all(2)
+	estilo_ok.set_corner_radius_all(10)
+	estilo_ok.content_margin_left = 14.0
+	estilo_ok.content_margin_right = 14.0
+	estilo_ok.content_margin_top = 8.0
+	estilo_ok.content_margin_bottom = 8.0
+	_boton_conectar.add_theme_stylebox_override("normal", estilo_ok)
+	_boton_conectar.add_theme_color_override("font_color", Color(0.85, 1.0, 0.95, 1.0))
 
 
 ## Si el visor pidió «oficina con avatar», se muestra el avatar del jugador.
