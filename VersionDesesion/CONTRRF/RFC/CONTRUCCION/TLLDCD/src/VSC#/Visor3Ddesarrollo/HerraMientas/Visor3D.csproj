@@ -30,6 +30,7 @@
 
     <Title>Wold Virtual p2p 3D</Title>
     <Description>Visor 3D — LCDMWoldVirtualP2P3D v2.8.4 (Metaverso oficial con Lucía 3D como anfitriona, registro inmutable por bloques y servidor blockchain oficial integrado)</Description>
+    <DefineConstants Condition="'$(GodotSourcePreview)' == 'true'">$(DefineConstants);GODOT_SOURCE_PREVIEW</DefineConstants>
   </PropertyGroup>
 
   <!--
@@ -119,6 +120,10 @@
     <None Update="Assets\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="Iniciar_Lucia_Visor.ps1">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
   </ItemGroup>
 
   <!-- Recursos embebidos para distribución standalone en un único .exe -->
@@ -152,12 +157,18 @@
     <EmbeddedResource Include="..\constructor_godot.zip"
                       Condition="!Exists('..\CopiaDeSeguridad\constructor_godot.zip') and Exists('..\constructor_godot.zip')"
                       LogicalName="Visor3D.constructor_godot.zip" />
+    <EmbeddedResource Include="$(ActualizacionVolatilPath)"
+                      Condition="'$(ActualizacionVolatilPath)' != '' and Exists('$(ActualizacionVolatilPath)')"
+                      LogicalName="Visor3D.actualizacion_volatil.zip" />
     <EmbeddedResource Include="..\CopiaDeSeguridad\actualizacion_v2.8.4.zip"
-                      Condition="Exists('..\CopiaDeSeguridad\actualizacion_v2.8.4.zip')"
+                      Condition="'$(OmitirPaqueteVolatil)' != 'true' and '$(ActualizacionVolatilPath)' == '' and Exists('..\CopiaDeSeguridad\actualizacion_v2.8.4.zip')"
                       LogicalName="Visor3D.actualizacion_volatil.zip" />
     <EmbeddedResource Include="..\actualizacion_v2.8.4.zip"
-                      Condition="!Exists('..\CopiaDeSeguridad\actualizacion_v2.8.4.zip') and Exists('..\actualizacion_v2.8.4.zip')"
+                      Condition="'$(OmitirPaqueteVolatil)' != 'true' and '$(ActualizacionVolatilPath)' == '' and !Exists('..\CopiaDeSeguridad\actualizacion_v2.8.4.zip') and Exists('..\actualizacion_v2.8.4.zip')"
                       LogicalName="Visor3D.actualizacion_volatil.zip" />
+    <EmbeddedResource Include="$(DaoPatchPath)"
+                      Condition="'$(DaoPatchPath)' != '' and Exists('$(DaoPatchPath)')"
+                      LogicalName="Visor3D.dao_patch.pck" />
   </ItemGroup>
 
 </Project>

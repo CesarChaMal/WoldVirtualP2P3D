@@ -18,7 +18,6 @@ const Identidad = preload("res://gdscrip/Identidad.gd")
 const REGISTRO_ISLAS := "user://islas_registro.cfg"
 ## Isla Única LucIA (sede de LucIA y futura DAO): fija en el origen, fuera del
 ## reparto por índice, por lo que nunca se duplica ni se retira.
-const RUTA_ISLA_DAO := "res://lucia3D/IslaUnicaLucIA/ESCENAS/IslaUnicaLucIA.tscn"
 
 @export var chunk_size: float = 199.5
 
@@ -60,7 +59,6 @@ var _last_target_host := "127.0.0.1"
 var _last_target_port := PUERTO_WS
 var _is_explicit_client := false
 var _invitacion := ""   # credencial de sesión exigida por el proxy del anfitrión
-var _isla_dao: Node3D = null # Isla Única LucIA ya instanciada en esta máquina
 var _beacon_udp: PacketPeerUDP = null
 var _beacon_timer := 0.0
 
@@ -202,6 +200,11 @@ func _aplicar_asignacion_local(asig: Dictionary) -> void:
 	_avatar_confirmado = true
 	if ruta == anterior:
 		return
+	# No reemplazar al avatar visible por una respuesta tardía del anfitrión
+	# después de que el jugador ya haya entrado a su isla.
+	if _mi_isla_anunciada:
+		print("[ChunkManager] Reserva de avatar tardía; se conserva el avatar activo: ", anterior)
+		return
 	set_player_avatar(ruta)
 	if userbase != null and userbase.has_method("snap_camera"):
 		userbase.call("snap_camera")
@@ -291,7 +294,7 @@ func _ready():
 	original_island.hide()
 	original_ocean.hide()
 	_desactivar_colision_plantilla()
-	_instanciar_isla_dao()
+	_instanciar_oceano_dao()
 	_mi_nick = _leer_nick()
 	_mi_uuid = Identidad.asegurar_identidad()
 	_mi_isla_guardada = Identidad.leer_mi_isla(_mi_uuid)
@@ -850,6 +853,8 @@ func _promover_a_servidor() -> void:
 		for idx in active_islands.values():
 			covered[int(idx)] = true
 		for entry in tm2.get_islands():
+			if bool(entry.get("dao", false)):
+				continue
 			var hidx := int(entry["index"])
 			if hidx < 0:
 				continue # la isla DAO no es una plaza de jugador
@@ -996,30 +1001,20 @@ func _centro_isla(index: int) -> Vector2:
 ## Instancia una sola vez la Isla Única LucIA en el origen. No usa índices ni
 ## RPC de islas de jugador: el script de la isla la protege con un grupo, así
 ## que aunque algo intentara cargarla de nuevo la copia se descarta sola.
-func _instanciar_isla_dao() -> void:
-	if _isla_dao != null and is_instance_valid(_isla_dao):
+## WoldVirtual3DP2P.tscn monta la única DAO como escena hermana del mundo.
+## Aquí solo se crea su agua, con el mismo bloque oceánico que acompaña a cada
+## isla personal; no se instancia una segunda copia de la sede.
+func _instanciar_oceano_dao() -> void:
+	if get_node_or_null("OceanoDAO") != null:
 		return
-	if not get_tree().get_nodes_in_group("isla_unica_lucia").is_empty():
+	var oceano_dao := original_ocean.duplicate() as Node3D
+	if oceano_dao == null:
 		return
-	if not ResourceLoader.exists(RUTA_ISLA_DAO):
-		push_warning("[DAO] Falta la escena de la Isla Única LucIA: " + RUTA_ISLA_DAO)
-		return
-	var escena: Resource = load(RUTA_ISLA_DAO)
-	if not (escena is PackedScene):
-		push_warning("[DAO] La escena de la Isla Única LucIA no es válida: " + RUTA_ISLA_DAO)
-		return
-	var nodo := (escena as PackedScene).instantiate() as Node3D
-	if nodo == null:
-		return
-	nodo.position = Vector3.ZERO
-	add_child(nodo)
-	_isla_dao = nodo
-	# La plantilla de océano está oculta; la DAO necesita su propio mar local.
-	var ocean_dao = original_ocean.duplicate()
-	ocean_dao.show()
-	add_child(ocean_dao)
-	ocean_dao.position = Vector3.ZERO
-	print("[DAO] Isla Única LucIA instanciada en el origen (0,0,0)")
+	oceano_dao.name = "OceanoDAO"
+	oceano_dao.position = Vector3.ZERO
+	oceano_dao.show()
+	add_child(oceano_dao)
+	print("[DAO] Agua de sede compartida en el origen (0,0,0)")
 
 
 ## Fija la isla propia, la persiste y coloca el avatar solo la primera vez.
@@ -1050,11 +1045,12 @@ func _colocar_avatar_en_isla(index: int) -> void:
 				and bool(cfg.get_value("posicion", "has_saved_pos", false))
 		# La posición solo vale para la misma isla: evita reaparecer en otra.
 		var idx_pos := int(cfg.get_value("posicion", "island_index", -1))
-		if has_pos and idx_pos == index:
-			var sx: float = float(cfg.get_value("posicion", "x", centro.x))
-			var sy: float = float(cfg.get_value("posicion", "y", 42.0))
-			var sz: float = float(cfg.get_value("posicion", "z", centro.y))
-			var srot: float = float(cfg.get_value("posicion", "rot_y", 0.0))
+		var sx: float = float(cfg.get_value("posicion", "x", centro.x))
+		var sy: float = float(cfg.get_value("posicion", "y", 42.0))
+		var sz: float = float(cfg.get_value("posicion", "z", centro.y))
+		var srot: float = float(cfg.get_value("posicion", "rot_y", 0.0))
+		var guardada_cerca_de_isla := Vector2(sx - centro.x, sz - centro.y).length() < chunk_size * 0.45
+		if has_pos and idx_pos == index and guardada_cerca_de_isla:
 			if sy > -5.0:
 				userbase.position = Vector3(sx, sy, sz)
 				userbase.rotation.y = srot

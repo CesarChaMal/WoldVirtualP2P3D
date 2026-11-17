@@ -15,6 +15,7 @@ const POLL_INTERVAL := 1.0
 const INDICE_DAO := -1
 ## Devuelto por current_island_index cuando el avatar no está sobre una isla.
 const SIN_ISLA := -2
+const RADIO_SEDE_DAO := 48.0
 
 var island_history: Dictionary = {} # index(int) -> Vector3 (centro isla)
 var owner_offline: Dictionary = {} # index(int) -> bool
@@ -108,7 +109,16 @@ func _grid_pos(index: int, chunk_size: float) -> Vector3:
 			return Vector3(0.0, 0.0, dist)
 
 func get_islands() -> Array:
-	var out: Array = []
+	var out: Array = [{
+		"index": INDICE_DAO,
+		"position": _posicion_dao(),
+		"offline": false,
+		"nombre": "Isla Única LucIA",
+		"uuid": "DAO",
+		"propia": false,
+		"registrada": true,
+		"dao": true,
+	}]
 	# Dueño de cada isla (solo el servidor conoce active_islands/owner_names).
 	var active: Dictionary = {}
 	var names: Dictionary = {}
@@ -121,6 +131,8 @@ func get_islands() -> Array:
 	if _chunk_manager != null and _chunk_manager.get("my_own_index") != null:
 		mi_isla = int(_chunk_manager.get("my_own_index"))
 	for idx in island_history.keys():
+		if int(idx) == INDICE_DAO:
+			continue # La DAO ya se añadió una sola vez al inicio de la lista.
 		var dueno_uuid := _uuid_dueno(int(idx))
 		out.append({
 			"index": idx,
@@ -211,6 +223,8 @@ func get_max_index() -> int:
 # Isla bajo la posicion dada (la mas cercana dentro de media celda) —incluida la
 # DAO—; SIN_ISLA si el avatar no está sobre ninguna.
 func current_island_index(pos: Vector3) -> int:
+	if en_dao(pos):
+		return INDICE_DAO
 	if island_history.is_empty():
 		return SIN_ISLA
 	var chunk_size := 199.5
@@ -225,6 +239,20 @@ func current_island_index(pos: Vector3) -> int:
 			best_d = d
 			best = int(idx)
 	return best
+
+
+## La DAO es un destino fijo del metaverso, no una isla personal repartida.
+func en_dao(pos: Vector3) -> bool:
+	var centro := _posicion_dao()
+	return Vector2(centro.x - pos.x, centro.z - pos.z).length() <= RADIO_SEDE_DAO
+
+
+func _posicion_dao() -> Vector3:
+	var arbol := get_tree()
+	if arbol == null:
+		return Vector3.ZERO
+	var sede := arbol.get_first_node_in_group("isla_unica_lucia") as Node3D
+	return sede.global_position if sede != null else Vector3.ZERO
 
 func mark_owner_left(_player_id: int) -> void:
 	# Llamar en el futuro desde peer_disconnected sin borrar la isla.
@@ -256,13 +284,19 @@ func _on_isla_registrada(exito: bool, mensaje: String) -> void:
 
 
 func teleport_to(index: int) -> bool:
-	if not island_history.has(index):
+	if index != INDICE_DAO and not island_history.has(index):
 		return false
 	if _userbase == null:
 		_userbase = get_parent().get_node_or_null("USERBASE") as CharacterBody3D
 	if _userbase == null:
 		return false
-	var target: Vector3 = island_history[index]
+	var target: Vector3
+	if index == INDICE_DAO:
+		var sede := _posicion_dao()
+		# Llegada sobre la rampa sur para entrar por la puerta principal.
+		target = sede + Vector3(0.0, 0.0, 34.0)
+	else:
+		target = island_history[index]
 	_userbase.velocity = Vector3.ZERO
 	_userbase.position = Vector3(target.x, SPAWN_HEIGHT, target.z)
 	# La cámara orbital queda lejos tras el salto: recolocarla al instante.

@@ -275,6 +275,10 @@ namespace Visor3D
         /// </summary>
         public static string GetMainPackPath()
         {
+            // La versión DAO 2.8.7 arranca con el PCK incremental; su autoload
+            // monta después la base 2.8.6 desde WOLD_BASE_PCK.
+            if (File.Exists(AppExtractor.DaoPatchPath)) return AppExtractor.DaoPatchPath;
+
             // 1. Paquete volátil (embebido en el .exe, materializado en %TEMP%)
             string? volatil = Visor3D.CargaVolatil.VolatilePackage.PckVolatilPath;
             if (!string.IsNullOrEmpty(volatil) && File.Exists(volatil)) return volatil;

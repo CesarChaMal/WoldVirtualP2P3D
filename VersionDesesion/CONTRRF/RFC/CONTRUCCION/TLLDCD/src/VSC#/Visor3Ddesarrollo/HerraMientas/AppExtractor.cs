@@ -60,6 +60,9 @@ namespace Visor3D
         /// <summary>Mundo empaquetado que se pasa a Godot con <c>--main-pack</c>.</summary>
         public static string PckPath => Path.Combine(RuntimeDir, "wvp3d.pck");
 
+        /// <summary>PCK delta 2.8.7: lleva únicamente recursos modificados desde 2.8.6.</summary>
+        public static string DaoPatchPath => Path.Combine(RuntimeDir, "dao_patch.pck");
+
         /// <summary>Proyecto suelto (solo modo desarrollo; ya no se extrae del .exe).</summary>
         public static string ProjectPath => Path.Combine(RuntimeDir, "WoldVirtualP2P3D");
 
@@ -71,6 +74,8 @@ namespace Visor3D
         {
             try
             {
+                var assembly = Assembly.GetExecutingAssembly();
+                bool expectsPatch = assembly.GetManifestResourceInfo("Visor3D.dao_patch.pck") != null;
                 if (File.Exists(VersionFile) &&
                     File.Exists(GodotExePath) &&
                     Directory.Exists(ConstructorTemplateDir))
@@ -80,18 +85,23 @@ namespace Visor3D
                     {
                         string expectedPckHash = "";
                         string expectedGodotHash = "";
+                        string expectedPatchHash = "";
                         for (int i = 1; i < lines.Length; i++)
                         {
                             if (lines[i].StartsWith("pck_sha256=", StringComparison.OrdinalIgnoreCase))
                                 expectedPckHash = lines[i].Substring("pck_sha256=".Length).Trim();
                             else if (lines[i].StartsWith("godot_sha256=", StringComparison.OrdinalIgnoreCase))
                                 expectedGodotHash = lines[i].Substring("godot_sha256=".Length).Trim();
+                            else if (lines[i].StartsWith("dao_patch_sha256=", StringComparison.OrdinalIgnoreCase))
+                                expectedPatchHash = lines[i].Substring("dao_patch_sha256=".Length).Trim();
                         }
 
                         // Reutilizar solo si ambos hashes coinciden (H4: fiabilidad de extracción)
                         bool pckOk = string.IsNullOrEmpty(expectedPckHash) || CalcularSha256(PckPath) == expectedPckHash;
                         bool godotOk = string.IsNullOrEmpty(expectedGodotHash) || CalcularSha256(GodotExePath) == expectedGodotHash;
-                        if (pckOk && godotOk)
+                        bool patchOk = !expectsPatch ||
+                            (!string.IsNullOrEmpty(expectedPatchHash) && CalcularSha256(DaoPatchPath) == expectedPatchHash);
+                        if (pckOk && godotOk && patchOk)
                         {
                             return true;
                         }
@@ -103,8 +113,6 @@ namespace Visor3D
                     try { Directory.Delete(RuntimeDir, recursive: true); } catch { }
                 }
                 Directory.CreateDirectory(RuntimeDir);
-
-                var assembly = Assembly.GetExecutingAssembly();
 
                 // 1. Motor Godot → Servidor3D
                 string servidorDir = Path.Combine(RuntimeDir, "Servidor3D");
@@ -124,16 +132,23 @@ namespace Visor3D
                 //    viaja dentro del paquete volátil y no se embebe suelto).
                 ExtractFile(assembly, "Visor3D.wvp3d.pck", PckPath);
 
+                // El parche incremental contiene solo los recursos cambiados desde 2.8.6.
+                bool patchExtraido = ExtractFile(assembly, "Visor3D.dao_patch.pck", DaoPatchPath);
+                if (expectsPatch && !patchExtraido)
+                    throw new InvalidDataException("El parche DAO está embebido, pero no se pudo extraer.");
+
                 // 3. Plantilla del editor de construcción (opcional).
                 ExtractResource(assembly, "Visor3D.constructor_godot.zip", ConstructorTemplateDir);
 
                 string pckHash = CalcularSha256(PckPath) ?? "";
                 string godotHash = CalcularSha256(godotEnServidor) ?? "";
+                string patchHash = CalcularSha256(DaoPatchPath) ?? "";
                 File.WriteAllLines(VersionFile, new[]
                 {
                     AppVersion,
                     $"pck_sha256={pckHash}",
-                    $"godot_sha256={godotHash}"
+                    $"godot_sha256={godotHash}",
+                    $"dao_patch_sha256={patchHash}"
                 });
                 return true;
             }

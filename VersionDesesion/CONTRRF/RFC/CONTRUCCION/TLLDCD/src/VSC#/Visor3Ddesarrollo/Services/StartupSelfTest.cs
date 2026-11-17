@@ -40,10 +40,14 @@ namespace Visor3D.Services
 
                 bool tieneMotor = Array.Exists(recursos, n => n.EndsWith("godot_exe.zip", StringComparison.OrdinalIgnoreCase));
                 bool tieneVolatil = Array.Exists(recursos, n => n.EndsWith("actualizacion_volatil.zip", StringComparison.OrdinalIgnoreCase));
-                Check("Recursos embebidos (motor + paquete volátil)", tieneMotor && tieneVolatil,
-                      $"motor={tieneMotor} volatil={tieneVolatil}");
+                bool tienePatch = Array.Exists(recursos, n => n.EndsWith("dao_patch.pck", StringComparison.OrdinalIgnoreCase));
+                bool modoDelta = tienePatch;
+                bool tienePaqueteMundo = modoDelta ? tienePatch : tieneVolatil;
+                Check("Recursos embebidos (motor + " + (modoDelta ? "parche DAO" : "paquete volátil") + ")",
+                      tieneMotor && tienePaqueteMundo,
+                      $"motor={tieneMotor} patch={tienePatch} volatil={tieneVolatil}");
 
-                if (!tieneMotor || !tieneVolatil)
+                if (!tieneMotor || !tienePaqueteMundo)
                     return Cerrar(salida, fallos);
 
                 AppExtractor.SilentErrors = true;
@@ -52,17 +56,27 @@ namespace Visor3D.Services
                 Check("Ejecutable del motor", File.Exists(AppExtractor.GodotExePath),
                       Tamano(AppExtractor.GodotExePath));
 
-                bool montado = Visor3D.CargaVolatil.VolatilePackage.EnsureReady();
-                string? pckVol = Visor3D.CargaVolatil.VolatilePackage.PckVolatilPath;
-                long tamPck = !string.IsNullOrEmpty(pckVol) && File.Exists(pckVol)
-                    ? new FileInfo(pckVol).Length : 0;
-                Check("Paquete volátil montado (PCK en RAM)", montado && tamPck > 100L * 1024 * 1024,
-                      $"pck={tamPck / 1048576.0:0.0} MiB");
+                if (modoDelta)
+                {
+                    Check("Parche DAO extraído", File.Exists(AppExtractor.DaoPatchPath), Tamano(AppExtractor.DaoPatchPath));
+                    bool baseDisponible = DeltaPackManager.EnsureBasePackAvailable();
+                    Check("Base original 2.8.6 disponible", baseDisponible,
+                          baseDisponible ? Tamano(DeltaPackManager.BasePckPath) : DeltaPackManager.BasePckPath);
+                }
+                else
+                {
+                    bool montado = Visor3D.CargaVolatil.VolatilePackage.EnsureReady();
+                    string? pckVol = Visor3D.CargaVolatil.VolatilePackage.PckVolatilPath;
+                    long tamPck = !string.IsNullOrEmpty(pckVol) && File.Exists(pckVol)
+                        ? new FileInfo(pckVol).Length : 0;
+                    Check("Paquete volátil montado (PCK en RAM)", montado && tamPck > 100L * 1024 * 1024,
+                          $"pck={tamPck / 1048576.0:0.0} MiB");
 
-                Check("Configuración en RAM (cuenta)",
-                      !string.IsNullOrWhiteSpace(Visor3D.CargaVolatil.VolatilePackage.CuentaJson), "");
-                Check("Configuración en RAM (sesión)",
-                      !string.IsNullOrWhiteSpace(Visor3D.CargaVolatil.VolatilePackage.SesionYaml), "");
+                    Check("Configuración en RAM (cuenta)",
+                          !string.IsNullOrWhiteSpace(Visor3D.CargaVolatil.VolatilePackage.CuentaJson), "");
+                    Check("Configuración en RAM (sesión)",
+                          !string.IsNullOrWhiteSpace(Visor3D.CargaVolatil.VolatilePackage.SesionYaml), "");
+                }
 
                 string marcador = Path.Combine(AppExtractor.RuntimeDir, ".extracted");
                 string versionMarcador = File.Exists(marcador)
@@ -77,7 +91,7 @@ namespace Visor3D.Services
                 ComprobarRecolector(Check);
 
                 if (File.Exists(AppExtractor.GodotExePath))
-                    ComprobarMotor(Check);
+                    ComprobarMotor(Check, modoDelta);
             }
             catch (Exception ex)
             {
@@ -182,9 +196,11 @@ namespace Visor3D.Services
             }
         }
 
-        private static void ComprobarMotor(Action<string, bool, string> check)
+        private static void ComprobarMotor(Action<string, bool, string> check, bool modoDelta)
         {
-            string log = Path.Combine(Path.GetTempPath(), "wvp3d_arranque_selftest.log");
+            string raizPruebas = Environment.GetEnvironmentVariable("WOLD_DEV_DIR") ?? "";
+            if (string.IsNullOrWhiteSpace(raizPruebas)) raizPruebas = Path.GetTempPath();
+            string log = Path.Combine(raizPruebas, "startup-selftest", "godot.log");
             try { if (File.Exists(log)) File.Delete(log); } catch { }
 
             // El mundo sólo carga si user://registro.cfg trae avatar y nick; sin eso
@@ -192,7 +208,7 @@ namespace Visor3D.Services
             // abre la isla ni el 8911. Por eso la prueba usa un perfil de usar y
             // tirar bajo %TEMP%: así no depende del perfil del equipo ni lo toca,
             // y un p2p_session.json real no la convierte en cliente remoto.
-            string perfil = Path.Combine(Path.GetTempPath(), "wvp3d_arranque_perfil_" + Guid.NewGuid().ToString("N"));
+            string perfil = Path.Combine(raizPruebas, "startup-selftest", "perfil_" + Guid.NewGuid().ToString("N"));
             string datos = Path.Combine(perfil, "Godot", "app_userdata", "WoldVirtualP2P3D");
 
             var psi = new ProcessStartInfo(AppExtractor.GodotExePath)
@@ -203,7 +219,9 @@ namespace Visor3D.Services
             psi.Environment["APPDATA"] = perfil;
             psi.ArgumentList.Add("--headless");
             psi.ArgumentList.Add("--main-pack");
-            psi.ArgumentList.Add(Visor3D.CargaVolatil.VolatilePackage.PckVolatilPath ?? AppExtractor.PckPath);
+            psi.ArgumentList.Add(modoDelta
+                ? AppExtractor.DaoPatchPath
+                : Visor3D.CargaVolatil.VolatilePackage.PckVolatilPath ?? AppExtractor.PckPath);
             psi.ArgumentList.Add("--log-file");
             psi.ArgumentList.Add(log);
             psi.ArgumentList.Add("--quit-after");
@@ -214,6 +232,16 @@ namespace Visor3D.Services
             // indicador, el motor entra directo con el perfil guardado y monta la
             // isla y el 8911, que es lo que la autoprueba comprueba.
             psi.ArgumentList.Add("--sin-recepcion");
+
+            if (modoDelta)
+                psi.Environment["WOLD_BASE_PCK"] = DeltaPackManager.BasePckPath;
+
+            try { Directory.CreateDirectory(Path.GetDirectoryName(log)!); }
+            catch (Exception ex)
+            {
+                check("Motor arranca desde el PCK", false, $"no se pudo preparar el directorio de prueba: {ex.Message}");
+                return;
+            }
 
             try
             {

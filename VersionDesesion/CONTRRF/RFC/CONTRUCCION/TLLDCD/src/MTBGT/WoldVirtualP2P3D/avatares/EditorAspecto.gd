@@ -73,6 +73,8 @@ func _ready() -> void:
 
 
 func _construir_escena() -> void:
+	if _modo_dao:
+		return
 	var entorno := WorldEnvironment.new()
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
@@ -131,12 +133,13 @@ func _montar() -> void:
 		_avatar.queue_free()
 	_avatar = Catalogo.crear(avatar_id)
 	if _avatar == null:
-		push_error("[EditorAspecto] no se pudo crear ", avatar_id)
+		push_error("[EditorAspecto] no se encontró el avatar para editar: ", avatar_id)
 		return
-	_avatar.name = "AvatarAspecto"
-	_avatar.position = Vector3.ZERO
-	_avatar.set("es_selector", true)
-	add_child(_avatar)
+	if not _modo_dao:
+		_avatar.name = "AvatarAspecto"
+		_avatar.position = Vector3.ZERO
+		_avatar.set("es_selector", true)
+		add_child(_avatar)
 	Pers.aplicar(_avatar, _pers)
 	_sincronizar_controles()
 	_actualizar_textos()

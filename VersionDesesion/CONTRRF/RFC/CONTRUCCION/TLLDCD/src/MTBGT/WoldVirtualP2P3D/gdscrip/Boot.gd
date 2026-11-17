@@ -41,6 +41,7 @@ var _cargando := false
 var _espera_isla: Timer
 var _sonda
 var _invitar_lucia := false
+var _iniciar_en_dao := false
 
 
 func _ready() -> void:
@@ -58,12 +59,18 @@ func _ready() -> void:
 	print("[Boot.gd] El rol de red (Servidor/Cliente) y la IP objetivo los resuelve ChunkManager.gd.")
 	print("================================================================")
 
+	var onboarding_dao_completado := "user://onboarding_dao_completado.flag"
+	_iniciar_en_dao = _dao_lobby_solicitado()
+	var modo_preview_dao := _dao_preview_solicitado()
+	if _iniciar_en_dao:
+		_desactivar_carrusel_automatico_dao()
 	# ── RESET DE SESIÓN (flag escrito por el visor C# al arrancar) ──────────────
 	# Si el visor detectó un reset limpio, borramos el registro para que
 	# Godot arranque siempre como primera vez (carrusel + registro de nick).
 	var reset_flag_path := OS.get_user_data_dir().path_join("reset_flag.txt")
-	if FileAccess.file_exists(reset_flag_path):
-		if FileAccess.file_exists("user://registro.cfg"):
+	if FileAccess.file_exists(reset_flag_path) and not modo_preview_dao:
+		if not FileAccess.file_exists(onboarding_dao_completado) \
+				and FileAccess.file_exists("user://registro.cfg"):
 			DirAccess.remove_absolute(
 				OS.get_user_data_dir().path_join("registro.cfg"))
 		DirAccess.remove_absolute(reset_flag_path)
@@ -80,6 +87,25 @@ func _ready() -> void:
 	_sonda = Sonda.new()
 	_sonda.name = "Sonda"
 	add_child(_sonda)
+
+	# Vista previa técnica del visor: usa un avatar de catálogo para mostrar la
+	# DAO aunque este perfil de prueba no tenga cuenta local. No guarda ni altera
+	# la cuenta/registro del usuario.
+	if modo_preview_dao:
+		_avatar_scene = "res://avatares/AVMJ1.tscn"
+		_nick = "Vista previa DAO"
+		print("[Boot] Vista previa del visor: cargando avatar de catálogo en la DAO")
+		_entrar_a_isla()
+		return
+
+	# El onboarding de la DAO ya guardó nick y avatar antes de cargar este mundo.
+	# Consumir la marca evita volver a pedir recepción y continúa con el reparto
+	# normal del ChunkManager.
+	if FileAccess.file_exists(onboarding_dao_completado):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(onboarding_dao_completado))
+		print("[Boot] Onboarding DAO completado; cargando directamente la isla personal")
+		_continuar_registrado()
+		return
 
 	# LucIA recibe SIEMPRE primero (anfitriona): saluda al registrado y le dice
 	# cómo iniciar sesión en esta versión, o guía el registro del nuevo.
@@ -100,6 +126,29 @@ func _sin_recepcion() -> bool:
 	var args: Array = OS.get_cmdline_args()
 	args.append_array(OS.get_cmdline_user_args())
 	return args.has("--sin-recepcion")
+
+
+func _dao_lobby_solicitado() -> bool:
+	var args: Array = OS.get_cmdline_args()
+	args.append_array(OS.get_cmdline_user_args())
+	return args.has("--dao-lobby")
+
+
+func _dao_preview_solicitado() -> bool:
+	var args: Array = OS.get_cmdline_args()
+	args.append_array(OS.get_cmdline_user_args())
+	return args.has("--dao-preview")
+
+
+## El carrusel de registro sigue disponible en la consola del atrio, pero no se
+## abre al pasar por allí durante una sesión de un ciudadano ya registrado.
+func _desactivar_carrusel_automatico_dao() -> void:
+	var sede := get_tree().root.find_child("IslaUnicaLucIA", true, false)
+	if sede == null:
+		return
+	var carrusel := sede.find_child("CarruselDAO", true, false)
+	if carrusel != null and carrusel.has_method("set_auto_abrir"):
+		carrusel.call("set_auto_abrir", false)
 
 
 ## El registro del jugador (user://avatar_hash.json) guarda la escena que eligió
@@ -482,10 +531,32 @@ func _on_mi_isla_lista() -> void:
 	if _espera_isla and is_instance_valid(_espera_isla):
 		_espera_isla.stop()
 	_ocultar_carga()
+	if _iniciar_en_dao:
+		_colocar_jugador_en_dao()
 	_mostrar_bienvenida()
 	if _invitar_lucia:
 		_invitar_lucia = false
 		_spawn_lucia_invitada()
+
+
+## Reubica solo al jugador local en la DAO compartida; no altera el índice ni la
+## posición de su isla personal, que sigue siendo vecina y se asigna por sesión.
+func _colocar_jugador_en_dao() -> void:
+	if _mundo == null or not is_instance_valid(_mundo):
+		return
+	var jugador := _mundo.get_node_or_null("USERBASE") as CharacterBody3D
+	if jugador == null:
+		return
+	var dao := _mundo.get_tree().root.find_child("IslaUnicaLucIA", true, false) as Node3D
+	if dao == null:
+		return
+	var spawn := dao.to_global(Vector3(0.0, 42.2, 5.2))
+	jugador.global_position = spawn
+	jugador.velocity = Vector3.ZERO
+	# Desde el punto de recepción, LucIA está al otro lado del eje Z local.
+	jugador.global_rotation.y = dao.global_rotation.y + PI
+	if jugador.has_method("snap_camera"):
+		jugador.call("snap_camera")
 
 
 ## LucIA acompaña al jugador en su isla cuando se pide desde el visor.

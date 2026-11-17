@@ -269,6 +269,11 @@ namespace Visor3D
                     }
                     if (!string.IsNullOrEmpty(_userArgs))
                         args += $" -- {_userArgs}";
+#if GODOT_SOURCE_PREVIEW
+                    // La vista previa usa Vulkan dentro del HWND hijo de WPF;
+                    // la compilación publicada conserva su configuración propia.
+                    if (!_editorMode) args = "--rendering-driver vulkan " + args;
+#endif
 
                     var psi = new ProcessStartInfo
                     {
@@ -277,6 +282,19 @@ namespace Visor3D
                         UseShellExecute  = false,
                         CreateNoWindow   = false
                     };
+
+                    bool baseDisponible = !_editorMode && DeltaPackManager.EnsureBasePackAvailable();
+                    bool esParcheDao = !_editorMode &&
+                        string.Equals(_mainPack, AppExtractor.DaoPatchPath, StringComparison.OrdinalIgnoreCase);
+                    if (esParcheDao && !baseDisponible)
+                    {
+                        Console.WriteLine("[GodotHwndHost] ERROR: falta la base original 2.8.6; se cancela el arranque del parche DAO.");
+                        return;
+                    }
+                    if (baseDisponible)
+                    {
+                        psi.Environment["WOLD_BASE_PCK"] = DeltaPackManager.BasePckPath;
+                    }
 
                     if (_editorMode)
                     {
@@ -289,6 +307,14 @@ namespace Visor3D
                         Directory.CreateDirectory(Path.Combine(cache, "Godot"));
                         psi.Environment["LOCALAPPDATA"] = cache;
                     }
+#if GODOT_SOURCE_PREVIEW
+                    // El proceso Godot de la vista previa usa un user:// aislado
+                    // y escribible; así no consume flags ni migra datos reales.
+                    string previewData = Path.Combine(
+                        AppContext.BaseDirectory, "preview_userdata");
+                    Directory.CreateDirectory(Path.Combine(previewData, "Godot", "app_userdata"));
+                    psi.Environment["APPDATA"] = previewData;
+#endif
 
                     Console.WriteLine($"[GodotHwndHost] Lanzando proceso Godot: {_godotExePath}");
                     Console.WriteLine($"[GodotHwndHost] Mundo: {(_mainPack ?? _projectPath)}");
@@ -335,6 +361,7 @@ namespace Visor3D
                     if (hwnd == IntPtr.Zero || token.IsCancellationRequested) return;
 
                     _childHwnd = hwnd;
+                    Console.WriteLine($"[GodotHwndHost] Ventana de Godot detectada (PID={_godotProcess.Id}, HWND=0x{hwnd.ToInt64():X}).");
 
                     // Volver al hilo UI para embeber
                     Application.Current.Dispatcher.Invoke(() =>
@@ -383,7 +410,10 @@ namespace Visor3D
             }
 
             // Reparentar
-            SetParent(_childHwnd, _hostHwnd);
+            Marshal.SetLastPInvokeError(0);
+            IntPtr parentAnterior = SetParent(_childHwnd, _hostHwnd);
+            int errorParent = Marshal.GetLastPInvokeError();
+            Console.WriteLine($"[GodotHwndHost] SetParent HWND=0x{_childHwnd.ToInt64():X} -> 0x{_hostHwnd.ToInt64():X}; anterior=0x{parentAnterior.ToInt64():X}, error={errorParent}.");
 
             // Quitar decoraciones
             int style = GetWindowLong(_childHwnd, GWL_STYLE);

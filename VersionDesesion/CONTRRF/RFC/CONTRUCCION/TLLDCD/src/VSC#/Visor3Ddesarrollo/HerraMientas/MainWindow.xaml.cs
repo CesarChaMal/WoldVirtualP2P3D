@@ -282,9 +282,61 @@ namespace Visor3D
             // anteriores en el próximo arranque.
             RuntimeCleaner.MarcarArranqueCorrecto();
 
-            // La nueva experiencia empieza siempre en la oficina de LucIA:
-            // recepción, registro, conexión de túnel y avatares viven allí.
-            _ = Dispatcher.BeginInvoke(new Action(AbrirOficinaLucia));
+            // Un perfil oficial completo entra como jugador, con su avatar, en
+            // el vestíbulo común de la DAO. Los perfiles nuevos siguen llegando
+            // a la recepción interactiva de LucIA.
+            bool perfilDaoListo = PerfilUsuario.TieneCuentaOficial && TieneAvatarGuardadoValido();
+            bool recepcionSolicitada = File.Exists(Path.Combine(_rutaDatosGodot, "abrir_recepcion.flag"));
+            _ = Dispatcher.BeginInvoke(new Action(() =>
+            {
+#if GODOT_SOURCE_PREVIEW
+                if (string.IsNullOrWhiteSpace(_urlAmigoPendiente)) EntrarAlMetaverso();
+                else if (perfilDaoListo && !recepcionSolicitada) EntrarAlMetaverso();
+                else AbrirOficinaLucia();
+#else
+                if (perfilDaoListo && !recepcionSolicitada) EntrarAlMetaverso();
+                else AbrirOficinaLucia();
+#endif
+            }));
+        }
+
+        private bool TieneAvatarGuardadoValido()
+        {
+            try
+            {
+                string ruta = Path.Combine(PerfilUsuario.GodotUserDataDir, "registro.cfg");
+                if (!File.Exists(ruta)) return false;
+                string nick = "";
+                string escena = "";
+                bool enJugador = false;
+                foreach (string linea in File.ReadLines(ruta))
+                {
+                    string texto = linea.Trim();
+                    if (texto.StartsWith("[", StringComparison.Ordinal) && texto.EndsWith("]", StringComparison.Ordinal))
+                    {
+                        enJugador = texto.Equals("[jugador]", StringComparison.OrdinalIgnoreCase);
+                        continue;
+                    }
+                    if (!enJugador) continue;
+                    int separador = texto.IndexOf('=');
+                    if (separador < 0) continue;
+                    string clave = texto[..separador].Trim();
+                    string valor = texto[(separador + 1)..].Trim().Trim('"');
+                    if (clave.Equals("nick", StringComparison.OrdinalIgnoreCase)) nick = valor;
+                    else if (clave.Equals("avatar_scene", StringComparison.OrdinalIgnoreCase)) escena = valor;
+                }
+                if (nick.Length == 0 || !escena.StartsWith("res://avatares/", StringComparison.Ordinal)) return false;
+                string nombre = Path.GetFileNameWithoutExtension(escena);
+                string[] ids = { "AVH1", "AVH2", "AVH3", "AVH4", "AVMJ1", "AVMJ2", "AVMJ3", "AVMJ4" };
+                if (!ids.Contains(nombre, StringComparer.OrdinalIgnoreCase)) return false;
+                string proyecto = GodotConfig.GetProjectPath();
+                return File.Exists(Path.Combine(proyecto, "avatares", nombre + ".tscn"));
+            }
+            catch (Exception ex)
+            {
+                Log($"[DAO] No se pudo validar el avatar guardado: {ex.Message}");
+                return false;
+            }
         }
 
         /// <summary>
@@ -1568,6 +1620,20 @@ namespace Visor3D
                     string scenePath  = GodotConfig.GetScenePath();
                     string mainPack   = GodotConfig.GetMainPackPath();
 
+#if GODOT_SOURCE_PREVIEW
+                    // Esta configuración solo se usa en la vista previa de
+                    // desarrollo. Carga el árbol Godot activo, nunca un PCK
+                    // antiguo empacado dentro de una actualización publicada.
+                    string? srcActivo = GodotConfig.SrcActivo();
+                    if (!string.IsNullOrWhiteSpace(srcActivo))
+                        projectDir = Path.Combine(srcActivo, "MTBGT", "WoldVirtualP2P3D");
+                    mainPack = "";
+                    string godotFuente = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        "Desktop", "AreaDeTrabajo", "Godot_v4.7.2-stable_win64.exe");
+                    if (File.Exists(godotFuente)) godotExe = godotFuente;
+#endif
+
                     // Guardar p2p_session.json para que Godot siempre lo tenga accesible
                     GuardarP2PSessionConfig();
 
@@ -1576,6 +1642,21 @@ namespace Visor3D
                     await GuardarUbicacionSmtplcAsync();
 
                     string userArgs = "";
+                    bool cuentaLocalCompleta = string.IsNullOrWhiteSpace(_urlAmigoPendiente)
+                        && PerfilUsuario.TieneCuentaOficial && TieneAvatarGuardadoValido();
+                    string dataDir = !string.IsNullOrWhiteSpace(_rutaDatosGodot)
+                        ? _rutaDatosGodot : PerfilUsuario.GodotUserDataDir;
+                    bool recepcionSolicitada = File.Exists(Path.Combine(dataDir, "abrir_recepcion.flag"));
+                    if (cuentaLocalCompleta && !recepcionSolicitada)
+                        userArgs = "--sin-recepcion --dao-lobby";
+#if GODOT_SOURCE_PREVIEW
+                    if (string.IsNullOrWhiteSpace(_urlAmigoPendiente))
+                    {
+                        userArgs = cuentaLocalCompleta
+                            ? "--sin-recepcion --dao-lobby"
+                            : "--sin-recepcion --dao-lobby --dao-preview";
+                    }
+#endif
                     string rolLog = "";
                     if (!string.IsNullOrWhiteSpace(_urlAmigoPendiente))
                     {

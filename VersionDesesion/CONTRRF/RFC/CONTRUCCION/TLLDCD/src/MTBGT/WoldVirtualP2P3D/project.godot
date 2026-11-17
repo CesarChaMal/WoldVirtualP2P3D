@@ -16,6 +16,7 @@ config/features=PackedStringArray("4.7", "Forward Plus")
 
 [autoload]
 
+DAOBasePackLoader="*res://gdscrip/DAOBasePackLoader.gd"
 OptimizadorAvatares="*res://gdscrip/OptimizadorAvatares.gd"
 Avatares="*res://avatares/GestorAvatares.gd"
 
@@ -67,4 +68,4 @@ ui_down={
 
 [rendering]
 
-rendering_device/driver.windows="d3d12"
+rendering_device/driver.windows="vulkan"

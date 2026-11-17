@@ -319,3 +319,9 @@ VersionDesesion/SistemaPrincipal/PRY/Archivo/VersionesDeRefuerzo/actualizacion_*
 .DS_Store
 Thumbs.db
 *.swp
+
+# Codex temp builds
+VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/codex/
+
+**/.godot/
+
