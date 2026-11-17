@@ -223,7 +223,7 @@ namespace Visor3D
             };
             _timerLucia.Tick += async (s, e) =>
             {
-                if (_iniciandoLucia || _servidorLucia.EstaListo()) return;
+                if (_iniciandoLucia) return;
                 _iniciandoLucia = true;
                 try { await IniciarServidorLuciaAsync(); }
                 finally { _iniciandoLucia = false; }
@@ -284,9 +284,61 @@ namespace Visor3D
             // anteriores en el próximo arranque.
             RuntimeCleaner.MarcarArranqueCorrecto();
 
-            // La nueva experiencia empieza siempre en la oficina de LucIA:
-            // recepción, registro, conexión de túnel y avatares viven allí.
-            _ = Dispatcher.BeginInvoke(new Action(AbrirOficinaLucia));
+            // Un perfil oficial completo entra como jugador, con su avatar, en
+            // el vestíbulo común de la DAO. Los perfiles nuevos siguen llegando
+            // a la recepción interactiva de LucIA.
+            bool perfilDaoListo = PerfilUsuario.TieneCuentaOficial && TieneAvatarGuardadoValido();
+            bool recepcionSolicitada = File.Exists(Path.Combine(_rutaDatosGodot, "abrir_recepcion.flag"));
+            _ = Dispatcher.BeginInvoke(new Action(() =>
+            {
+#if GODOT_SOURCE_PREVIEW
+                if (string.IsNullOrWhiteSpace(_urlAmigoPendiente)) EntrarAlMetaverso();
+                else if (perfilDaoListo && !recepcionSolicitada) EntrarAlMetaverso();
+                else AbrirOficinaLucia();
+#else
+                if (perfilDaoListo && !recepcionSolicitada) EntrarAlMetaverso();
+                else AbrirOficinaLucia();
+#endif
+            }));
+        }
+
+        private bool TieneAvatarGuardadoValido()
+        {
+            try
+            {
+                string ruta = Path.Combine(PerfilUsuario.GodotUserDataDir, "registro.cfg");
+                if (!File.Exists(ruta)) return false;
+                string nick = "";
+                string escena = "";
+                bool enJugador = false;
+                foreach (string linea in File.ReadLines(ruta))
+                {
+                    string texto = linea.Trim();
+                    if (texto.StartsWith("[", StringComparison.Ordinal) && texto.EndsWith("]", StringComparison.Ordinal))
+                    {
+                        enJugador = texto.Equals("[jugador]", StringComparison.OrdinalIgnoreCase);
+                        continue;
+                    }
+                    if (!enJugador) continue;
+                    int separador = texto.IndexOf('=');
+                    if (separador < 0) continue;
+                    string clave = texto[..separador].Trim();
+                    string valor = texto[(separador + 1)..].Trim().Trim('"');
+                    if (clave.Equals("nick", StringComparison.OrdinalIgnoreCase)) nick = valor;
+                    else if (clave.Equals("avatar_scene", StringComparison.OrdinalIgnoreCase)) escena = valor;
+                }
+                if (nick.Length == 0 || !escena.StartsWith("res://avatares/", StringComparison.Ordinal)) return false;
+                string nombre = Path.GetFileNameWithoutExtension(escena);
+                string[] ids = { "AVH1", "AVH2", "AVH3", "AVH4", "AVMJ1", "AVMJ2", "AVMJ3", "AVMJ4" };
+                if (!ids.Contains(nombre, StringComparer.OrdinalIgnoreCase)) return false;
+                string proyecto = GodotConfig.GetProjectPath();
+                return File.Exists(Path.Combine(proyecto, "avatares", nombre + ".tscn"));
+            }
+            catch (Exception ex)
+            {
+                Log($"[DAO] No se pudo validar el avatar guardado: {ex.Message}");
+                return false;
+            }
         }
 
         /// <summary>
@@ -697,7 +749,9 @@ namespace Visor3D
             try
             {
                 bool ok = await _servidorLucia.IniciarAsync();
-                TxtEstadoLuciaTop.Text = ok ? "🧠 LucIA: 8765" : "🔴 LucIA: parada";
+                TxtEstadoLuciaTop.Text = ok ? "LucIA: conectada" :
+                    (_servidorLucia.UltimoError?.Contains("Ollama", StringComparison.OrdinalIgnoreCase) == true
+                        ? "LucIA: revisar Ollama/modelo" : "LucIA: error de arranque");
                 TxtEstadoLuciaTop.ToolTip = ok
                     ? "Cerebro de LucIA escuchando en 127.0.0.1:8765"
                     : (_servidorLucia.UltimoError ?? "No se pudo arrancar LucIA");
@@ -1591,6 +1645,20 @@ namespace Visor3D
                     string scenePath  = GodotConfig.GetScenePath();
                     string mainPack   = GodotConfig.GetMainPackPath();
 
+#if GODOT_SOURCE_PREVIEW
+                    // Esta configuración solo se usa en la vista previa de
+                    // desarrollo. Carga el árbol Godot activo, nunca un PCK
+                    // antiguo empacado dentro de una actualización publicada.
+                    string? srcActivo = GodotConfig.SrcActivo();
+                    if (!string.IsNullOrWhiteSpace(srcActivo))
+                        projectDir = Path.Combine(srcActivo, "MTBGT", "WoldVirtualP2P3D");
+                    mainPack = "";
+                    string godotFuente = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        "Desktop", "AreaDeTrabajo", "Godot_v4.7.2-stable_win64.exe");
+                    if (File.Exists(godotFuente)) godotExe = godotFuente;
+#endif
+
                     // Guardar p2p_session.json para que Godot siempre lo tenga accesible
                     GuardarP2PSessionConfig();
 
@@ -1599,6 +1667,22 @@ namespace Visor3D
                     await GuardarUbicacionSmtplcAsync();
 
                     string userArgs = "";
+                    bool cuentaLocalCompleta = string.IsNullOrWhiteSpace(_urlAmigoPendiente)
+                        && PerfilUsuario.TieneCuentaOficial && TieneAvatarGuardadoValido();
+                    string dataDir = !string.IsNullOrWhiteSpace(_rutaDatosGodot)
+                        ? _rutaDatosGodot : PerfilUsuario.GodotUserDataDir;
+                    bool recepcionSolicitada = File.Exists(Path.Combine(dataDir, "abrir_recepcion.flag"));
+                    // El botón «Oficina de Lucía 3D» debe abrir el alta nueva de la
+                    // DAO. Sin `--sin-recepcion`, Boot ve la marca y monta el
+                    // onboarding DAO en vez de la recepción antigua.
+                    if (recepcionSolicitada || (!cuentaLocalCompleta && string.IsNullOrWhiteSpace(_urlAmigoPendiente)))
+                        scenePath = "res://lucia3D/IslaUnicaLucIA/ONBOARDING/OnboardingDAO.tscn";
+                    else if (cuentaLocalCompleta)
+                        userArgs = "--sin-recepcion";
+#if GODOT_SOURCE_PREVIEW
+                    else if (string.IsNullOrWhiteSpace(_urlAmigoPendiente))
+                        userArgs = "--sin-recepcion --dao-lobby --dao-preview";
+#endif
                     string rolLog = "";
                     if (!string.IsNullOrWhiteSpace(_urlAmigoPendiente))
                     {
@@ -2020,10 +2104,34 @@ namespace Visor3D
             return resultado;
         }
 
+        private string GuardarWebNodoRelay()
+        {
+            string dir = Path.Combine(TestUserDataDir, "user");
+            Directory.CreateDirectory(dir);
+            string ruta = Path.Combine(dir, "webnodo_relay.json");
+            string temporal = ruta + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllBytes(temporal, JsonSerializer.SerializeToUtf8Bytes(new
+                {
+                    invitacion = App.WebNodo.TokenInvitacion,
+                    chat_enabled = App.WebNodo.ChatEnabled,
+                    chat_port = App.WebNodo.ChatLocalPort
+                }));
+                File.Move(temporal, ruta, true);
+            }
+            finally
+            {
+                if (File.Exists(temporal)) File.Delete(temporal);
+            }
+            return ruta;
+        }
+
         private void GuardarP2PSessionConfig()
         {
             try
             {
+                GuardarWebNodoRelay();
                 bool hasTarget = TryParseConnectionTarget(_urlAmigoPendiente, out string targetHost, out int targetPort);
                 bool esClienteRemoto = hasTarget && targetHost != "127.0.0.1" && targetHost != "localhost" && !string.IsNullOrEmpty(targetHost);
                 // misma raíz que la línea de órdenes del motor, para que el fichero de
@@ -2240,6 +2348,7 @@ namespace Visor3D
 
             App.WebNodo.ChatEnabled = _chatServer?.IsRunning == true;
             App.WebNodo.ChatLocalPort = _chatServer?.Port ?? 0;
+            GuardarWebNodoRelay();
 
             _chatVoice = new ChatVoice();
             _chatVoice.MicFrame += OnMicrofonoChat;
@@ -2293,6 +2402,7 @@ namespace Visor3D
 
             App.WebNodo.ChatEnabled = false;
             App.WebNodo.ChatLocalPort = 0;
+            GuardarWebNodoRelay();
 
             _nombresChat.Clear();
             _tilesChat.Clear();
@@ -3997,10 +4107,17 @@ namespace Visor3D
                 if (!File.Exists(python) || !File.Exists(script))
                     return false;
 
+                string dirUsuario = Path.Combine(TestUserDataDir, "user");
+                Directory.CreateDirectory(dirUsuario);
+                string releasePortal = Path.Combine(dirUsuario, "webnodo_release.json");
+                string sesion = Path.Combine(dirUsuario, "p2p_session.json");
+                WebNodoService.GuardarReleasePortal(releasePortal);
+                string relay = GuardarWebNodoRelay();
+
                 _webNodoHelper = Process.Start(new ProcessStartInfo
                 {
                     FileName = python,
-                    Arguments = $"\"{script}\" --puerto 3030 --exe \"{exe}\"",
+                    Arguments = $"\"{script}\" --puerto 3030 --exe \"{exe}\" --release \"{releasePortal}\" --sesion \"{sesion}\" --relay \"{relay}\"",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                 });

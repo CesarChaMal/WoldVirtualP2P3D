@@ -36,6 +36,12 @@ func _ready() -> void:
 	_construir_oficina()
 	_construir_iluminacion()
 	_cargar_lucia()
+	var perfil := ConfigFile.new()
+	if perfil.load("user://registro.cfg") == OK and FileAccess.file_exists("user://cuenta.json"):
+		var cuenta = JSON.parse_string(FileAccess.get_file_as_string("user://cuenta.json"))
+		if cuenta is Dictionary and not str(cuenta.get("cuenta_hash", "")).is_empty() \
+				and not str(perfil.get_value("jugador", "avatar_scene", "")).is_empty():
+			configurar_asamblea()
 
 
 func _process(delta: float) -> void:
@@ -174,21 +180,53 @@ func _construir_terrazas() -> void:
 	# terraza de la DAO (40,2 -> 41,7) atravesando los accesos de la cúpula.
 	var metal := _mat(COLOR_ACERO_CLARO, 0.42, 0.45)
 	var oro := _mat(COLOR_ORO, 0.3, 0.85, COLOR_ORO, 0.5)
-	var inclinacion := atan2(1.5, 5.0)
+	# El terreno sube distinto en cada punto cardinal: la rampa de Este arranca
+	# en 40,33 y la de Oeste en 41,18. Cada perfil ajusta su pendiente para que
+	# el borde alto siga a ras de la terraza y la boca no quede enterrada.
+	var perfiles := [
+		{"inclinacion": atan2(1.5, 5.0), "y": 40.75, "baranda": 41.05},
+		{"inclinacion": asin(1.37 / 5.6), "y": 40.869558, "baranda": 41.169558},
+		{"inclinacion": atan2(1.5, 5.0), "y": 40.75, "baranda": 41.05},
+		{"inclinacion": asin(0.52 / 5.6), "y": 41.290648, "baranda": 41.590648},
+	]
 	for i in 4:
-		var nodo := Node3D.new()
-		nodo.name = ["RampaSur", "RampaEste", "RampaNorte", "RampaOeste"][i]
-		nodo.rotation.y = [0.0, -PI * 0.5, PI, PI * 0.5][i]
-		add_child(nodo)
-		_caja("Superficie", Vector3(7.2, 0.3, 5.6), Vector3(0.0, 40.95, 33.45), metal,
+		# Las colisiones viven en la escena; el constructor sólo añade lo visual.
+		var nombre_rampa: String = ["RampaSur", "RampaEste", "RampaNorte", "RampaOeste"][i]
+		var nodo := get_node_or_null(nombre_rampa) as Node3D
+		if nodo == null:
+			nodo = Node3D.new()
+			nodo.name = nombre_rampa
+			nodo.rotation.y = [0.0, -PI * 0.5, PI, PI * 0.5][i]
+			add_child(nodo)
+		var inclinacion: float = perfiles[i]["inclinacion"]
+		var y_rampa: float = perfiles[i]["y"]
+		var y_baranda: float = perfiles[i]["baranda"]
+		# El borde alto queda a ras del suelo del atrio: sin escalón, se sale
+		# caminando de la terraza por las cuatro rampas.
+		_caja("Superficie", Vector3(7.2, 0.3, 5.6), Vector3(0.0, y_rampa, 33.45), metal,
 				Vector3(inclinacion, 0.0, 0.0), nodo)
-		var forma := BoxShape3D.new()
-		forma.size = Vector3(7.2, 0.3, 5.6)
-		_colision("ColisionRampa", forma, Vector3(0.0, 40.95, 33.45),
-				Vector3(inclinacion, 0.0, 0.0), nodo)
-		for lado in [-3.45, 3.45]:
-			_caja("Baranda", Vector3(0.18, 0.26, 5.6), Vector3(lado, 41.25, 33.45), oro,
+		if nodo.get_node_or_null("ColisionRampa") == null:
+			var forma := BoxShape3D.new()
+			forma.size = Vector3(7.2, 0.3, 5.6)
+			_colision("ColisionRampa", forma, Vector3(0.0, y_rampa, 33.45),
 					Vector3(inclinacion, 0.0, 0.0), nodo)
+		for lado in [-3.45, 3.45]:
+			_caja("Baranda", Vector3(0.18, 0.26, 5.6), Vector3(lado, y_baranda, 33.45), oro,
+					Vector3(inclinacion, 0.0, 0.0), nodo)
+		if nodo.get_node_or_null("ColisionBarandas") == null:
+			# La baranda visual también frena: ningún borde de rampa queda abierto.
+			var barandas := StaticBody3D.new()
+			barandas.name = "ColisionBarandas"
+			nodo.add_child(barandas)
+			for lado in [-3.45, 3.45]:
+				var forma_baranda := BoxShape3D.new()
+				forma_baranda.size = Vector3(0.18, 0.26, 5.6)
+				var baranda := CollisionShape3D.new()
+				baranda.name = "BarandaIzq" if lado < 0.0 else "BarandaDer"
+				baranda.shape = forma_baranda
+				baranda.position = Vector3(lado, y_baranda, 33.45)
+				baranda.rotation.x = inclinacion
+				barandas.add_child(baranda)
 
 	# Petril de la terraza, con huecos en las cuatro rampas.
 	var petril := _mat(COLOR_ACERO_CLARO, 0.4, 0.5, Color(0.02, 0.1, 0.14), 0.6)
@@ -198,6 +236,12 @@ func _construir_terrazas() -> void:
 		if i % 8 == 0:
 			continue
 		var centro := Vector3(sin(ang), 0.0, cos(ang)) * 30.4
+		# Los dos tramos que flanquean cada boca se corren hacia fuera: la rampa
+		# mide 7,2 m y el hueco de un solo tramo sólo deja 5,97 m.
+		var resto := i % 8
+		if resto == 1 or resto == 7:
+			var tangente := Vector3(cos(ang), 0.0, -sin(ang))
+			centro += tangente * (0.55 if resto == 1 else -0.55)
 		_caja("Petril_%d" % i, Vector3(5.4, 0.9, 0.45),
 				Vector3(centro.x, SUELO_Y + 0.45, centro.z), petril, Vector3(0.0, ang, 0.0))
 		_caja("RematePetril_%d" % i, Vector3(5.4, 0.1, 0.55),
@@ -364,10 +408,11 @@ func _construir_oficina() -> void:
 	var rampa := _caja("RampaDais", Vector3(3.6, 0.16, 1.9), Vector3(0.0, SUELO_Y + 0.27, 7.8), oro,
 			Vector3(atan2(ALTURA_DAIS, 1.9), 0.0, 0.0))
 	rampa.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	var forma_rampa := BoxShape3D.new()
-	forma_rampa.size = Vector3(3.6, 0.16, 1.9)
-	_colision("ColisionRampaDais", forma_rampa, Vector3(0.0, SUELO_Y + 0.27, 7.8),
-			Vector3(atan2(ALTURA_DAIS, 1.9), 0.0, 0.0))
+	if get_node_or_null("ColisionRampaDais") == null:
+		var forma_rampa := BoxShape3D.new()
+		forma_rampa.size = Vector3(3.6, 0.16, 1.9)
+		_colision("ColisionRampaDais", forma_rampa, Vector3(0.0, SUELO_Y + 0.27, 7.8),
+				Vector3(atan2(ALTURA_DAIS, 1.9), 0.0, 0.0))
 
 	var alto := SUELO_Y + ALTURA_DAIS
 	# Escritorio curvo: mesa de recepción frente a LucIA.
@@ -502,6 +547,113 @@ func _construir_iluminacion() -> void:
 # API para pruebas y para el resto del mundo
 # ---------------------------------------------------------------------------
 
+func configurar_asamblea() -> void:
+	# Reaplicar la desactivación incluso cuando el mobiliario ya existe.
+	var nodo_carrusel := carrusel()
+	if nodo_carrusel != null:
+		if nodo_carrusel.has_method("set_auto_abrir"):
+			nodo_carrusel.call("set_auto_abrir", false)
+		_desactivar_zona_asamblea(nodo_carrusel)
+	var zona := zona_personalizacion()
+	if zona != null:
+		_desactivar_zona_asamblea(zona)
+	var rotulo := get_node_or_null("RotuloVitrina_3") as Label3D
+	if rotulo != null:
+		rotulo.text = "ASAMBLEAS"
+	if get_node_or_null("AsambleaDAO") != null:
+		return
+
+	var asamblea := Node3D.new()
+	asamblea.name = "AsambleaDAO"
+	asamblea.position.y = SUELO_Y
+	add_child(asamblea)
+	var madera := _mat(COLOR_MADERA, 0.55)
+	var metal := _mat(COLOR_ACERO_CLARO, 0.35, 0.55)
+	var oro := _mat(COLOR_ORO, 0.28, 0.85)
+	var tapizado := _mat(Color(0.035, 0.16, 0.22), 0.9)
+
+	# Mesas sobre el aro de radio 14. El sector sur queda abierto: incluso
+	# los extremos de los asientos permanecen por debajo de z=10.
+	# Los sillones interiores quedan fuera del despacho y de su rampa.
+	for i in 9:
+		var ang := deg_to_rad(60.0 + 30.0 * i)
+		var radial := Vector3(sin(ang), 0.0, cos(ang))
+		var mesa := Node3D.new()
+		mesa.name = "MesaAsamblea_%02d" % i
+		mesa.position = radial * 14.0
+		mesa.rotation.y = ang
+		asamblea.add_child(mesa)
+		_pieza_asamblea("Tablero", Vector3(2.8, 0.14, 1.2), Vector3(0.0, 0.97, 0.0), madera, mesa)
+		_pieza_asamblea("Filo", Vector3(2.86, 0.04, 1.26), Vector3(0.0, 1.06, 0.0), oro, mesa)
+		for lado in [-0.95, 0.95]:
+			_cilindro("Pata_%s" % lado, 0.09, 0.09, 0.9, Vector3(lado, 0.45, 0.0), metal, mesa)
+			var forma_pata := CylinderShape3D.new()
+			forma_pata.radius = 0.09
+			forma_pata.height = 0.9
+			_colision("ColisionPata_%s" % lado, forma_pata, Vector3(lado, 0.45, 0.0), Vector3.ZERO, mesa)
+			_pieza_asamblea("Pie_%s" % lado, Vector3(0.45, 0.1, 0.9), Vector3(lado, 0.05, 0.0), metal, mesa)
+
+		for j in 2:
+			var silla := Node3D.new()
+			silla.name = "Silla_%02d_%d" % [i, j]
+			silla.position = radial * 16.0 + Vector3((j * 2 - 1) * 0.8, 0.0, 0.0).rotated(Vector3.UP, ang)
+			silla.rotation.y = ang
+			asamblea.add_child(silla)
+			_construir_asiento_asamblea(silla, false, metal, tapizado, oro)
+
+		var sillon := Node3D.new()
+		sillon.name = "Sillon_%02d" % i
+		sillon.position = radial * 11.5
+		sillon.rotation.y = ang + PI
+		asamblea.add_child(sillon)
+		_construir_asiento_asamblea(sillon, true, metal, tapizado, oro)
+
+
+func _desactivar_zona_asamblea(nodo: Node) -> void:
+	if nodo is Node3D:
+		(nodo as Node3D).hide()
+	elif nodo is CanvasItem:
+		(nodo as CanvasItem).hide()
+	if nodo is Area3D:
+		(nodo as Area3D).set_deferred("monitoring", false)
+	if nodo is CollisionShape3D:
+		(nodo as CollisionShape3D).set_deferred("disabled", true)
+	nodo.process_mode = Node.PROCESS_MODE_DISABLED
+	nodo.set_process(false)
+	nodo.set_physics_process(false)
+	nodo.set_process_input(false)
+	nodo.set_process_unhandled_input(false)
+	nodo.set_process_unhandled_key_input(false)
+	# También desactivar descendientes con PROCESS_MODE_ALWAYS propio.
+	for hijo in nodo.get_children():
+		_desactivar_zona_asamblea(hijo)
+
+
+func _pieza_asamblea(nombre: String, tam: Vector3, pos: Vector3,
+		mat: Material, padre: Node3D) -> void:
+	_caja(nombre, tam, pos, mat, Vector3.ZERO, padre)
+	var forma := BoxShape3D.new()
+	forma.size = tam
+	_colision("Colision" + nombre, forma, pos, Vector3.ZERO, padre)
+
+
+func _construir_asiento_asamblea(padre: Node3D, es_sillon: bool,
+		metal: Material, tapizado: Material, oro: Material) -> void:
+	var ancho := 1.3 if es_sillon else 0.7
+	var fondo := 1.05 if es_sillon else 0.75
+	_pieza_asamblea("Asiento", Vector3(ancho, 0.22, fondo), Vector3(0.0, 0.55, 0.0), tapizado, padre)
+	# Frente local -Z: las sillas miran al centro y los sillones a la mesa.
+	_pieza_asamblea("Respaldo", Vector3(ancho, 0.85, 0.18), Vector3(0.0, 1.02, fondo * 0.5 - 0.09), tapizado, padre)
+	_pieza_asamblea("RemateRespaldo", Vector3(ancho, 0.05, 0.2), Vector3(0.0, 1.47, fondo * 0.5 - 0.09), oro, padre)
+	for x in [-1.0, 1.0]:
+		for z in [-1.0, 1.0]:
+			_pieza_asamblea("Pata_%s_%s" % [x, z], Vector3(0.09, 0.44, 0.09),
+					Vector3(x * (ancho * 0.5 - 0.1), 0.22, z * (fondo * 0.5 - 0.1)), metal, padre)
+		if es_sillon:
+			_pieza_asamblea("Brazo_%s" % x, Vector3(0.18, 0.35, fondo),
+					Vector3(x * (ancho * 0.5 - 0.09), 0.82, 0.0), tapizado, padre)
+
+
 func lucia() -> Node3D:
 	return _lucia
 
@@ -512,6 +664,10 @@ func carrusel() -> Node:
 
 func portal() -> Node:
 	return get_node_or_null("PortalDAO")
+
+
+func zona_personalizacion() -> Node3D:
+	return get_node_or_null("ZonaPersonalizacion") as Node3D
 
 
 func aro_holo() -> Node3D:
