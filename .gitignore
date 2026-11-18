@@ -319,8 +319,6 @@ VersionDesesion/SistemaPrincipal/PRY/Archivo/VersionesDeRefuerzo/actualizacion_*
 /_tmp_*
 /_acl_reports/
 /_tmp_*/**
-/.vscode
-/.vscode/**
 !VersionDesesion/**/.dev/.vscode/
 !VersionDesesion/**/.dev/.vscode/**
 .idea/
