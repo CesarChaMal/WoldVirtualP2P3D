@@ -51,6 +51,13 @@ var _boton_conectar: Button
 var _estado_conexion: Label
 var _timer_conexion: Timer
 var _resultado_mtime := 0
+
+## Túnel DAO — LucIA como HOST abre un segundo túnel Cloudflare (puerto 8766)
+## para la DAO como centro de reuniones/asambleas del metaverso.
+var _boton_dao: Button
+var _estado_dao: Label
+var _timer_dao: Timer
+var _dao_mtime := 0
 var _avatar_caminable := false
 
 
@@ -61,6 +68,7 @@ func _ready() -> void:
 	_montar_lucia()
 	_montar_formulario()
 	_montar_conexion()
+	_montar_dao()
 	_preparar_avatar_oficina()
 	_saludar()
 
@@ -414,6 +422,134 @@ func _aplicar_estilo_conectado() -> void:
 	estilo_ok.content_margin_bottom = 8.0
 	_boton_conectar.add_theme_stylebox_override("normal", estilo_ok)
 	_boton_conectar.add_theme_color_override("font_color", Color(0.85, 1.0, 0.95, 1.0))
+
+
+## ─── BOTÓN DAO — LucIA como HOST abre el túnel Cloudflare de la DAO ─────────
+##
+## LucIAValidacionManager.cs arranca un segundo cloudflared (puerto 8766) en
+## paralelo al de la isla personal. Cuando obtiene URL pública escribe
+## user://tunel_dao_url.json. Aquí se lee y se muestra el botón de acceso.
+func _montar_dao() -> void:
+	var raiz := _capa.get_child(0) as Control
+	if raiz == null:
+		return
+
+	# Estilo del botón DAO: púrpura (color DAO del metaverso)
+	var estilo_dao := StyleBoxFlat.new()
+	estilo_dao.bg_color       = Color(0.22, 0.08, 0.45, 0.95)
+	estilo_dao.border_color   = Color(0.72, 0.42, 1.0, 0.9)
+	estilo_dao.set_border_width_all(2)
+	estilo_dao.set_corner_radius_all(10)
+	estilo_dao.content_margin_left   = 14.0
+	estilo_dao.content_margin_right  = 14.0
+	estilo_dao.content_margin_top    = 8.0
+	estilo_dao.content_margin_bottom = 8.0
+
+	_boton_dao = Button.new()
+	_boton_dao.text = "🏛 ENTRAR A LA DAO"
+	_boton_dao.add_theme_font_size_override("font_size", 18)
+	_boton_dao.add_theme_color_override("font_color", Color(0.92, 0.82, 1.0, 1.0))
+	_boton_dao.add_theme_stylebox_override("normal", estilo_dao)
+	_boton_dao.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_boton_dao.offset_left   = -240.0
+	_boton_dao.offset_right  = -34.0
+	_boton_dao.offset_top    = 178.0   # debajo del bloque CONECTAR
+	_boton_dao.offset_bottom = 224.0
+	_boton_dao.pressed.connect(_solicitar_dao)
+	raiz.add_child(_boton_dao)
+
+	_estado_dao = _etiqueta("⏳ LucIA iniciando túnel DAO…", 12, Color(0.78, 0.6, 1.0, 1.0), 3)
+	_estado_dao.autowrap_mode            = TextServer.AUTOWRAP_WORD_SMART
+	_estado_dao.horizontal_alignment     = HORIZONTAL_ALIGNMENT_RIGHT
+	_estado_dao.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_estado_dao.offset_left   = -380.0
+	_estado_dao.offset_right  = -34.0
+	_estado_dao.offset_top    = 228.0
+	_estado_dao.offset_bottom = 270.0
+	raiz.add_child(_estado_dao)
+
+	_timer_dao = Timer.new()
+	_timer_dao.wait_time = 0.5
+	_timer_dao.autostart = true
+	_timer_dao.timeout.connect(_poll_dao)
+	add_child(_timer_dao)
+
+
+## Polling del JSON del túnel DAO — igual que _poll_conexion pero para la DAO.
+func _poll_dao() -> void:
+	if _estado_dao == null:
+		return
+	var ruta := "user://tunel_dao_url.json"
+	if not FileAccess.file_exists(ruta):
+		return
+	var marca := FileAccess.get_modified_time(ruta)
+	if marca == _dao_mtime:
+		return
+	_dao_mtime = marca
+	var datos = JSON.parse_string(FileAccess.get_file_as_string(ruta))
+	if typeof(datos) != TYPE_DICTIONARY:
+		return
+	var exito  := bool(datos.get("exito", false))
+	var mensaje := str(datos.get("mensaje", ""))
+	var url    := str(datos.get("url", ""))
+	if exito:
+		_aplicar_estilo_dao_conectada()
+		_estado_dao.text = "✅ " + (mensaje if not mensaje.is_empty() else "DAO activa: " + url)
+		_boton_dao.text  = "🏛 DAO CONECTADA"
+		_boton_dao.disabled = false
+	else:
+		_estado_dao.text = "⚠️ " + (mensaje if not mensaje.is_empty() else "Túnel DAO caído.")
+		_boton_dao.text  = "🔄 REINTENTAR DAO"
+		_boton_dao.disabled = false
+
+
+## Al pulsar «ENTRAR A LA DAO»: lee el JSON y emite la señal para que el Boot
+## cargue InteriorDAO.tscn (sala de asamblea 3D) o abra el WebNodo de la DAO.
+func _solicitar_dao() -> void:
+	if _boton_dao == null:
+		return
+	var ruta := "user://tunel_dao_url.json"
+	if not FileAccess.file_exists(ruta):
+		_estado_dao.text = "⏳ LucIA está iniciando el túnel DAO…"
+		_boton_dao.text  = "⏳ CONECTANDO DAO…"
+		_boton_dao.disabled = true
+		return
+	var datos = JSON.parse_string(FileAccess.get_file_as_string(ruta))
+	if typeof(datos) != TYPE_DICTIONARY:
+		_estado_dao.text = "⚠️ Respuesta del túnel DAO ilegible."
+		return
+	var exito := bool(datos.get("exito", false))
+	var url   := str(datos.get("url", ""))
+	if exito and not url.is_empty():
+		_aplicar_estilo_dao_conectada()
+		_estado_dao.text = "✅ Entrando a la DAO: " + url
+		_boton_dao.text  = "🏛 EN LA DAO"
+		_boton_dao.disabled = true
+		# Boot.gd intercepta "dao:<url>" y carga InteriorDAO.tscn / WebNodo DAO
+		emit_signal("recepcion_completada", "dao:" + url)
+	else:
+		_estado_dao.text = "⏳ Túnel DAO aún no listo. Espera…"
+		_boton_dao.text  = "🔄 REINTENTAR"
+		_boton_dao.disabled = false
+
+
+## Aplica estilo visual «DAO conectada»: fondo verde-ámbar para distinguirla.
+func _aplicar_estilo_dao_conectada() -> void:
+	if _boton_dao == null:
+		return
+	var estilo_ok := StyleBoxFlat.new()
+	estilo_ok.bg_color       = Color(0.28, 0.12, 0.52, 0.97)
+	estilo_ok.border_color   = Color(0.85, 0.55, 1.0, 0.95)
+	estilo_ok.set_border_width_all(2)
+	estilo_ok.set_corner_radius_all(10)
+	estilo_ok.content_margin_left   = 14.0
+	estilo_ok.content_margin_right  = 14.0
+	estilo_ok.content_margin_top    = 8.0
+	estilo_ok.content_margin_bottom = 8.0
+	_boton_dao.add_theme_stylebox_override("normal", estilo_ok)
+	_boton_dao.add_theme_color_override("font_color", Color(0.95, 0.85, 1.0, 1.0))
+
+## ─────────────────────────────────────────────────────────────────────────────
 
 
 ## Si el visor pidió «oficina con avatar», se muestra el avatar del jugador.

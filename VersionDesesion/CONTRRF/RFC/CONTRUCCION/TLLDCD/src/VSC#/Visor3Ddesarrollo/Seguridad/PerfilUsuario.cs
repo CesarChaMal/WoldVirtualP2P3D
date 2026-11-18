@@ -23,8 +23,18 @@ namespace Visor3D.Seguridad
     /// </summary>
     public static class PerfilUsuario
     {
+        private static string RaizPerfil =>
+            Environment.GetEnvironmentVariable("WVP_PROFILE_ROOT") is { Length: > 0 } raiz
+                ? raiz
+                : Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+        private static string RaizGodot =>
+            Environment.GetEnvironmentVariable("WVP_GODOT_USERDATA_ROOT") is { Length: > 0 } raiz
+                ? raiz
+                : Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+
         public static string BaseDir { get; } = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            RaizPerfil,
             "WoldVirtualP2P3D");
 
         public static string UserDir => Path.Combine(BaseDir, "user");
@@ -36,7 +46,7 @@ namespace Visor3D.Seguridad
         /// Directorio de datos de Godot (%APPDATA%\Godot\app_userdata\WoldVirtualP2P3D).
         /// </summary>
         public static string GodotUserDataDir => Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            RaizGodot,
             "Godot", "app_userdata", "WoldVirtualP2P3D");
 
         /// <summary>

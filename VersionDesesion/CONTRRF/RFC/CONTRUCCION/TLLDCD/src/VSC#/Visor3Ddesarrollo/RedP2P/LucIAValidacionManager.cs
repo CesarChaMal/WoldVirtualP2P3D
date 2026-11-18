@@ -30,6 +30,8 @@ namespace Visor3D.RedP2P
 
         private FileSystemWatcher? _watcherLegado;
         private P2PTunnelManager? _tunnelManager;
+        private P2PTunnelManager? _tunnelManagerDao;  // túnel Cloudflare de la DAO
+        private readonly string   _rutaTunelDaoUrl;
         private CancellationTokenSource? _cts;
         private bool _disposeado;
         private readonly object _sync = new();
@@ -44,10 +46,11 @@ namespace Visor3D.RedP2P
 
         public LucIAValidacionManager()
         {
-            _godotUserDir = GodotUserDir;
-            _rutaTunelUrl  = Path.Combine(_godotUserDir, "tunel_lucia_url.json");
-            _rutaValidacion = Path.Combine(_godotUserDir, "validacion_conexion.json");
-            _rutaResultado  = Path.Combine(_godotUserDir, "validacion_resultado.json");
+            _godotUserDir    = GodotUserDir;
+            _rutaTunelUrl    = Path.Combine(_godotUserDir, "tunel_lucia_url.json");
+            _rutaTunelDaoUrl = Path.Combine(_godotUserDir, "tunel_dao_url.json");
+            _rutaValidacion  = Path.Combine(_godotUserDir, "validacion_conexion.json");
+            _rutaResultado   = Path.Combine(_godotUserDir, "validacion_resultado.json");
 
             Directory.CreateDirectory(_godotUserDir);
         }
@@ -91,6 +94,26 @@ namespace Visor3D.RedP2P
                 // Iniciar el bucle del túnel en background
                 _ = Task.Run(() => _tunnelManager.IniciarAsync());
 
+                // ── Túnel Cloudflare de la DAO (puerto 8766) ──────────────────
+                // Mismo cloudflared, puerto diferente → URL pública propia de la DAO.
+                // Godot la lee desde user://tunel_dao_url.json.
+                _tunnelManagerDao = new P2PTunnelManager(puertoLocal: 8766);
+
+                _tunnelManagerDao.UrlObtenida += url =>
+                {
+                    Console.WriteLine($"[LucIAValidacion] Túnel DAO activo: {url}");
+                    EscribirTunelDaoUrl(true, url, $"DAO activa: {url}");
+                };
+
+                _tunnelManagerDao.TunnelMuerto += host =>
+                {
+                    Console.WriteLine($"[LucIAValidacion] Túnel DAO caído ({host}), reconectando…");
+                    EscribirTunelDaoUrl(false, "", $"Reconectando DAO (host: {host})…");
+                };
+
+                _ = Task.Run(() => _tunnelManagerDao.IniciarAsync());
+                // ─────────────────────────────────────────────────────────────
+
                 // Mantener watcher legado por compatibilidad con versiones anteriores
                 _IniciarWatcherLegado();
             }
@@ -123,6 +146,37 @@ namespace Visor3D.RedP2P
             catch (Exception ex)
             {
                 Console.WriteLine($"[LucIAValidacion] Error escribiendo tunel_lucia_url.json: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Escribe user://tunel_dao_url.json con el estado del túnel Cloudflare de la DAO.
+        /// LucIA es el HOST: abre este túnel desde su máquina para que los usuarios
+        /// se conecten a la DAO como sala de reuniones/asambleas del metaverso.
+        /// Godot lo lee cada 0.5 s desde _poll_dao() en LuciaRecepcion.gd.
+        /// </summary>
+        private void EscribirTunelDaoUrl(bool exito, string url, string mensaje)
+        {
+            try
+            {
+                var resultado = new TunelLuciaUrl
+                {
+                    Exito     = exito,
+                    Url       = url,
+                    Mensaje   = mensaje,
+                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                };
+
+                string temporal = _rutaTunelDaoUrl + ".tmp";
+                string json = JsonSerializer.Serialize(resultado, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(temporal, json);
+                File.Move(temporal, _rutaTunelDaoUrl, overwrite: true);
+
+                Console.WriteLine($"[LucIAValidacion] tunel_dao_url.json → exito={exito}, url={url}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[LucIAValidacion] Error escribiendo tunel_dao_url.json: {ex.Message}");
             }
         }
 
@@ -180,10 +234,11 @@ namespace Visor3D.RedP2P
             catch { }
         }
 
-        /// <summary>Detiene el túnel y libera recursos.</summary>
+        /// <summary>Detiene ambos túneles (isla + DAO) y libera recursos. LucIA es el HOST de los dos.</summary>
         public void Detener()
         {
             P2PTunnelManager? tm;
+            P2PTunnelManager? tmDao;
             FileSystemWatcher? fw;
             CancellationTokenSource? cts;
 
@@ -191,17 +246,20 @@ namespace Visor3D.RedP2P
             {
                 if (_disposeado) return;
 
-                Console.WriteLine("[LucIAValidacion] Deteniendo túnel HOST…");
+                Console.WriteLine("[LucIAValidacion] Deteniendo túneles HOST (isla + DAO)…");
 
-                tm  = _tunnelManager; _tunnelManager = null;
-                fw  = _watcherLegado; _watcherLegado = null;
-                cts = _cts;           _cts           = null;
+                tm    = _tunnelManager;    _tunnelManager    = null;
+                tmDao = _tunnelManagerDao; _tunnelManagerDao = null;
+                fw    = _watcherLegado;    _watcherLegado    = null;
+                cts   = _cts;              _cts              = null;
             }
 
             try { cts?.Cancel(); } catch { }
-            try { tm?.Detener(); } catch { }
-            try { tm?.Dispose(); } catch { }
-            try { cts?.Dispose(); } catch { }
+            try { tm?.Detener(); }    catch { }
+            try { tm?.Dispose(); }    catch { }
+            try { tmDao?.Detener(); } catch { }
+            try { tmDao?.Dispose(); } catch { }
+            try { cts?.Dispose(); }   catch { }
 
             if (fw != null)
             {
@@ -215,8 +273,9 @@ namespace Visor3D.RedP2P
                 catch { }
             }
 
-            // Marcar el túnel como inactivo para Godot
+            // Marcar ambos túneles como inactivos para Godot
             EscribirTunelUrl(false, "", "Visor desconectado");
+            EscribirTunelDaoUrl(false, "", "DAO desconectada");
         }
 
         public void Dispose()

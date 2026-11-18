@@ -45,7 +45,9 @@ func _scan_islands() -> void:
 	if _chunk_manager == null:
 		return
 	var changed := false
-	var chunk_size: float = float(_chunk_manager.get("chunk_size"))
+	var chunk_size: float = 300.0
+	if _chunk_manager.get("chunk_size") != null:
+		chunk_size = float(_chunk_manager.get("chunk_size"))
 	# Solo cuentan las islas que ChunkManager tiene instanciadas (`island_nodes`,
 	# que el RPC de creación mantiene también en los clientes) y las reservas del
 	# anfitrión (`active_islands`). Antes se escaneaba cualquier hijo Node3D y se
@@ -295,6 +297,7 @@ func teleport_to(index: int) -> bool:
 		var sede := _posicion_dao()
 		# Llegada sobre la rampa sur para entrar por la puerta principal.
 		target = sede + Vector3(0.0, 0.0, 34.0)
+		call_deferred("_auto_conectar_dao")
 	else:
 		target = island_history[index]
 	_userbase.velocity = Vector3.ZERO
@@ -305,6 +308,12 @@ func teleport_to(index: int) -> bool:
 	# STUB futuro sincronizado: descomentar para replicar en red
 	# rpc("_sync_teleport", multiplayer.get_unique_id(), index)
 	return true
+
+
+func _auto_conectar_dao() -> void:
+	var dao := get_tree().get_first_node_in_group("isla_unica_lucia")
+	if dao != null and dao.has_method("conectar_dao_al_metaverso"):
+		dao.call("conectar_dao_al_metaverso")
 
 # STUB reservado para sincronizacion futura (actualmente sin uso -> teleporte local).
 # @rpc("any_peer", "reliable")

@@ -92,11 +92,20 @@ func _ready() -> void:
 	# Vista previa técnica del visor: usa un avatar de catálogo para mostrar la
 	# DAO aunque este perfil de prueba no tenga cuenta local. No guarda ni altera
 	# la cuenta/registro del usuario.
-	if modo_preview_dao:
-		_avatar_scene = "res://avatares/AVMJ1.tscn"
-		_nick = "Vista previa DAO"
-		print("[Boot] Vista previa del visor: cargando avatar de catálogo en la DAO")
-		_entrar_a_isla()
+	if modo_preview_dao and not recepcion_solicitada:
+		_cargar_nick_guardado()
+		if _nick.is_empty():
+			_nick = "Vecino DAO"
+		var cfg := ConfigFile.new()
+		if cfg.load("user://registro.cfg") == OK:
+			var av: String = str(cfg.get_value("jugador", "avatar_scene", "")).strip_edges()
+			if not av.is_empty():
+				_avatar_scene = av
+		if _avatar_scene.is_empty():
+			_avatar_scene = "res://avatares/AVMJ1.tscn"
+		print("[Boot] Vista previa del visor: recepción de LucIA en la DAO con avatar (", _avatar_scene, ") nick=", _nick)
+		_iniciar_en_dao = true
+		_mostrar_onboarding()
 		return
 
 	# El botón «Oficina de Lucía 3D» reabre el alta nueva dentro de la DAO.
@@ -562,7 +571,11 @@ func _colocar_jugador_en_dao() -> void:
 	var jugador := _mundo.get_node_or_null("USERBASE") as CharacterBody3D
 	if jugador == null:
 		return
-	var dao := _mundo.get_tree().root.find_child("IslaUnicaLucIA", true, false) as Node3D
+	var dao: Node3D = get_node_or_null("IslaUnicaLucIA") as Node3D
+	if dao == null:
+		dao = get_tree().get_first_node_in_group("isla_unica_lucia") as Node3D
+	if dao == null and _mundo != null and is_instance_valid(_mundo):
+		dao = _mundo.get_tree().root.find_child("IslaUnicaLucIA", true, false) as Node3D
 	if dao == null:
 		return
 	var spawn := dao.to_global(Vector3(0.0, 42.2, 5.2))
@@ -572,6 +585,8 @@ func _colocar_jugador_en_dao() -> void:
 	jugador.global_rotation.y = dao.global_rotation.y + PI
 	if jugador.has_method("snap_camera"):
 		jugador.call("snap_camera")
+	if dao.has_method("conectar_dao_al_metaverso"):
+		dao.call("conectar_dao_al_metaverso")
 
 
 ## LucIA acompaña al jugador en su isla cuando se pide desde el visor.

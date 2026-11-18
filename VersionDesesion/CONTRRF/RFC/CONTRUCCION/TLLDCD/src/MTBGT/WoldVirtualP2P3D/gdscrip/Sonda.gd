@@ -9,6 +9,7 @@ var _world_ready := false
 var _plazas := {}
 var _eco: Node = null
 var _abierta := false
+var _respuestas_modulares: Dictionary = {}
 
 
 ## API temporal anterior; nunca sustituye una sesión ya validada.
@@ -48,10 +49,22 @@ func _validar(objetivo: Dictionary, timeout_ms: int, conservar: bool) -> Diction
 	_preparar_eco()
 	if not multiplayer.connected_to_server.is_connected(_on_conectado):
 		multiplayer.connected_to_server.connect(_on_conectado)
+	if not multiplayer.connection_failed.is_connected(_on_fallo):
 		multiplayer.connection_failed.connect(_on_fallo)
+	if not multiplayer.server_disconnected.is_connected(_on_fallo):
 		multiplayer.server_disconnected.connect(_on_fallo)
 	var existente = multiplayer.multiplayer_peer
-	var reutilizar := Red.sesion_validada() and existente is WebSocketMultiplayerPeer
+	# En el alta local, ChunkManager ya abrió el servidor WS en este mismo
+	# MultiplayerAPI. Crear otro servidor para validar el botón Conectar falla
+	# con ERR_ALREADY_IN_USE; reutilizamos el host que ya está atendiendo la isla.
+	var anfitrion_local_activo := (
+		conservar
+		and bool(objetivo.get("force_host", false))
+		and existente is WebSocketMultiplayerPeer
+		and multiplayer.is_server()
+		and existente.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
+	)
+	var reutilizar := (Red.sesion_validada() and existente is WebSocketMultiplayerPeer) or anfitrion_local_activo
 	if reutilizar and existente.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
 		_cerrar()
 		return _resultado(false, "La sesión validada se desconectó")
@@ -189,3 +202,55 @@ func _indices(plazas: Dictionary) -> Array:
 			ocupados.append(i)
 	ocupados.sort()
 	return ocupados
+
+
+## Reenvía llamadas de DAO por la sesión Godot ya validada. El servidor C# solo
+## vive en el anfitrión y los clientes nunca abren un segundo túnel o socket.
+func solicitar_modular(metodo: String, ruta: String, datos: Dictionary = {}) -> Dictionary:
+	if multiplayer.multiplayer_peer == null or multiplayer.multiplayer_peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+		return {"ok": false, "status": 503, "body": {"error": "La sesión con el anfitrión no está conectada."}}
+	if multiplayer.is_server():
+		return await _servicio_local().solicitud_local(metodo, ruta, datos)
+	var id := "%d-%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+	rpc_id(1, "_procesar_solicitud_modular", id, metodo, ruta, datos)
+	var limite := Time.get_ticks_msec() + 20000
+	while Time.get_ticks_msec() < limite:
+		if _respuestas_modulares.has(id):
+			var respuesta: Dictionary = _respuestas_modulares[id]
+			_respuestas_modulares.erase(id)
+			return respuesta
+		await get_tree().create_timer(0.05).timeout
+	return {"ok": false, "status": 504, "body": {"error": "El anfitrión no respondió al módulo DAO."}}
+
+
+@rpc("any_peer", "reliable")
+func _procesar_solicitud_modular(id: String, metodo: String, ruta: String, datos: Dictionary) -> void:
+	if not multiplayer.is_server() or not _ruta_modular_permitida(metodo, ruta):
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender <= 1:
+		return
+	var servicio := _servicio_local()
+	if servicio == null:
+		rpc_id(sender, "_recibir_respuesta_modular", id,
+			{"ok": false, "status": 503, "body": {"error": "Servicio C# DAO no disponible."}})
+		return
+	var respuesta: Dictionary = await servicio.solicitud_local(metodo, ruta, datos)
+	rpc_id(sender, "_recibir_respuesta_modular", id, respuesta)
+
+
+@rpc("authority", "reliable")
+func _recibir_respuesta_modular(id: String, respuesta: Dictionary) -> void:
+	_respuestas_modulares[id] = respuesta
+
+
+func _servicio_local() -> Node:
+	return get_node_or_null("/root/ServicioConexionModular")
+
+
+func _ruta_modular_permitida(metodo: String, ruta: String) -> bool:
+	if metodo == "POST" and ruta in ["/api/session/connect", "/api/dao/register", "/api/dao/heartbeat"]:
+		return true
+	if metodo == "GET" and ruta == "/api/dao/members":
+		return true
+	return metodo == "DELETE" and ruta.begins_with("/api/dao/members/")
