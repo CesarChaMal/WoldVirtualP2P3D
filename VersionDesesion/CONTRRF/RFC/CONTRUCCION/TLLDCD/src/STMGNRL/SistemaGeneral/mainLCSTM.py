@@ -538,6 +538,7 @@ class OrquestadorSistemaLucIA(SelectorModelos):
         self.sesion_id = f"LUCIA_{time.strftime('%Y%m%d_%H%M%S')}"
         self.memoria = get_memoria(self.sesion_id) if _MEMORIA_DISPONIBLE and get_memoria else None
         self.constructor_lucia = LucIAConstructor()
+        self.comunidad: Comunidad = Comunidad()   # red de miembros + PoP + socket propuestas
         atexit.register(self.cerrar_sistema)
 
     def preparar_constructor_automatico(self) -> None:
@@ -660,6 +661,20 @@ class OrquestadorSistemaLucIA(SelectorModelos):
             print("  [SBSTM] Subsistema Evolutivo: \033[38;5;48mACTIVO\033[0m | 4 Fases: \033[38;5;141mAutopoiesis\033[0m")
         except Exception as _e_evo:
             print(f"  [SBSTM] Subsistema Evolutivo: \033[38;5;214mAVISO ({_e_evo})\033[0m")
+        # ── Comunidad P2P: servidor socket de propuestas e informes de presencia ──
+        try:
+            res_com = self.comunidad.arrancar_servidor()
+            if res_com.get("ok"):
+                n_prop = len(self.comunidad._propuestas_index)
+                print(
+                    f"  [COM]  Comunidad P2P        : \033[38;5;48mACTIVA\033[0m"
+                    f" | Puerto: \033[38;5;141m{self.comunidad.puerto}\033[0m"
+                    f" | Propuestas: \033[38;5;220m{n_prop}\033[0m"
+                )
+            else:
+                print(f"  [COM]  Comunidad P2P        : \033[38;5;214mAVISO ({res_com.get(chr(39) + \"motivo\" + chr(39), \"sin detalle\")})\033[0m")
+        except Exception as _e_com:
+            print(f"  [COM]  Comunidad P2P        : \033[38;5;214mAVISO ({_e_com})\033[0m")
         return True
     def procesar_turno_dialogo(self, prompt: str, emitir_voz: bool = True) -> None:
         '\n        Ejecuta el pipeline cognitivo completo por turno a coste cero con renderizado STYLOS:\n        1. Pre-procesamiento por las 50 neuronas para tono y estado emocional.\n        2. Inferencia local prioritaria (IALOCAL) y OpenRouter :free opcional.\n        3. Formateo y presentacion de respuesta estilizada (tarjetas redondeadas y markdown).\n        4. Asimilacion de gradientes Hebbianos en tensores de PSNRL.\n        5. Emision de transaccion sinaptica a Blockchain BKSVCB y minado automatico.\n        '
@@ -760,6 +775,9 @@ class OrquestadorSistemaLucIA(SelectorModelos):
             "Turnos de Sesion": str(self.turno_actual),
             "Modelo Activo": mod_act,
             "Costo Acumulado": f"${costo_usd:.2f} USD (100% Free)",
+            "Comunidad Miembros": str(len(self.comunidad.miembros)),
+            "Comunidad Presencias": str(len(self.comunidad.ledger_presencia)),
+            "Comunidad Propuestas": str(len(self.comunidad._propuestas_index)),
         }
         if EstiloTerminalLucIA:
             EstiloTerminalLucIA.renderizar_tarjeta_sistema("ESTADO INTEGRAL DE LUCIA (2026)", datos)
@@ -802,6 +820,27 @@ class OrquestadorSistemaLucIA(SelectorModelos):
                 break
             if cmd in ("estado", "status"):
                 self.mostrar_estado_sistema()
+                continue
+            if cmd in ("comunidad", "community"):
+                st = self.comunidad._despachar_mensaje({"tipo": "estado"})
+                print(
+                    f"  \033[38;5;51m[Comunidad]\033[0m"
+                    f" Miembros: \033[38;5;220m{st.get(chr(39)+\"miembros_total\"+chr(39), 0)}\033[0m"
+                    f" | Pruebas P2P: \033[38;5;141m{st.get(chr(39)+\"pruebas_presencia\"+chr(39), 0)}\033[0m"
+                    f" | Propuestas: \033[38;5;48m{st.get(chr(39)+\"propuestas_indexadas\"+chr(39), 0)}\033[0m"
+                )
+                continue
+            if cmd.startswith("propuesta "):
+                nombre_p = entrada[10:].strip()
+                cont_p = self.comunidad.leer_propuesta(nombre_p)
+                if cont_p:
+                    lineas = cont_p.splitlines()[:30]
+                    print("\n".join(lineas))
+                    if len(cont_p.splitlines()) > 30:
+                        print(f"  ... (+{len(cont_p.splitlines())-30} lineas)")
+                else:
+                    props = [p["nombre"] for p in self.comunidad.listar_propuestas()]
+                    print(f"  Propuesta no encontrada. Disponibles: {props}")
                 continue
             if cmd in ("ayuda", "help"):
                 if EstiloTerminalLucIA:
@@ -885,6 +924,12 @@ class OrquestadorSistemaLucIA(SelectorModelos):
             if getattr(self, "subsistema_neural", None):
                 try:
                     self.subsistema_neural.cerrar()
+                except Exception:
+                    pass
+            if getattr(self, "comunidad", None):
+                try:
+                    self.comunidad.parar_servidor()
+                    print("  [COM]  Servidor Comunidad   : cerrado.")
                 except Exception:
                     pass
 class ContextoOrquestadorLucIA:
