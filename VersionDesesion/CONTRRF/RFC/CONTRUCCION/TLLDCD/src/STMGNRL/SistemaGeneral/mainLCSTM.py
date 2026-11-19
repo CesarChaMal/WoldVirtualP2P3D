@@ -14,6 +14,36 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Dict, Final, List, Optional, Tuple, Union
 
+# -----------------------------------------------------------------------------
+# [ES] Confinamiento de Bytecode: Redirigir __pycache__ hacia .dev/pycache
+#      Evita crear carpetas __pycache__ dentro de src/ y centraliza la caché en .dev.
+# [EN] Bytecode Confinement: Redirect __pycache__ into .dev/pycache
+#      Prevents creating __pycache__ folders inside src/ and centralizes cache in .dev.
+# -----------------------------------------------------------------------------
+_DEV_DIR_CANONICAL: Final[Path] = Path(__file__).resolve().parents[4] / ".dev"
+_DEV_PYCACHE_DIR: Final[Path] = _DEV_DIR_CANONICAL / "pycache"
+try:
+    _DEV_PYCACHE_DIR.mkdir(parents=True, exist_ok=True)
+    sys.pycache_prefix = str(_DEV_PYCACHE_DIR)
+    os.environ["PYTHONPYCACHEPREFIX"] = str(_DEV_PYCACHE_DIR)
+except Exception:
+    pass
+
+def _limpiar_pycache_local() -> None:
+    """[ES] Limpia __pycache__ local si se creó antes de fijar sys.pycache_prefix.
+    [EN] Cleans up local __pycache__ if created before sys.pycache_prefix took effect.
+    """
+    local_cache = Path(__file__).resolve().parent / "__pycache__"
+    if local_cache.is_dir():
+        import shutil
+        try:
+            shutil.rmtree(local_cache, ignore_errors=True)
+        except Exception:
+            pass
+
+_limpiar_pycache_local()
+atexit.register(_limpiar_pycache_local)
+
 class Comunidad:
     """[ES] Representa la comunidad de usuarios, avatares y agentes de LucIA en la red P2P.
     [EN] Represents the community of users, avatars, and LucIA agents on the P2P network.

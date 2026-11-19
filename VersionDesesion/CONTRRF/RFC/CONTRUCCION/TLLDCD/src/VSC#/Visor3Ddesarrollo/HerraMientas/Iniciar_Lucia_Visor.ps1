@@ -8,6 +8,7 @@ if (-not $env:WVP_LEGACY_SRC) {
     }
 }
 $devDir = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\..\..\..\..\.dev"))
+$env:PYTHONPYCACHEPREFIX = (Join-Path $devDir "pycache")
 $py = Join-Path $devDir ".python\pythonw.exe"
 if (-not (Test-Path $py)) { $py = Join-Path $devDir "venv\Scripts\pythonw.exe" }
 if (-not (Test-Path $py)) { $py = Join-Path $src "LC_STM\python\pythonw.exe" }
