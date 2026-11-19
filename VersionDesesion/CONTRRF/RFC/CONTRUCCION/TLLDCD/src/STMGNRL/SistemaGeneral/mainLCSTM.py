@@ -1,4 +1,4 @@
-'\nmainLCSTM.py - Orquestador Central del Sistema Cognitivo LucIA (WoldVirtualP2P3D 2026)\n=====================================================================================\nCoordinacion maestro: Blockchain BKSVCB, Sesion P2P, IAFREE ($0.00), STYLOS y RPLC.\n'
+﻿'\nmainLCSTM.py - Orquestador Central del Sistema Cognitivo LucIA (WoldVirtualP2P3D 2026)\n=====================================================================================\nCoordinacion maestro: Blockchain BKSVCB, Sesion P2P, IAFREE ($0.00), STYLOS y RPLC.\n'
 
 from __future__ import annotations
 import atexit
@@ -13,6 +13,374 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Dict, Final, List, Optional, Tuple, Union
+
+class Comunidad:
+    """Representa la comunidad de usuarios y agentes de LucIA en la red P2P.
+
+    Extiende el registro basico de miembros con un canal TCP/JSON (socket)
+    que recibe propuestas de la carpeta Comunidad/ en tiempo real.
+
+    Propuestas integradas de Comunidad/ aplicables al metaverso:
+      - ProofOfPresence (C#)   -> PresenceClaim / PresenceProof / NonceCache
+        Equivalente Python: registrar_prueba_presencia()
+      - PresenceLedger  (C#)   -> libro mayor de encuentros P2P (en memoria)
+        Equivalente Python: ledger_presencia (dict thread-safe)
+      - PresenceArea    (C# / GDScript) -> zona de deteccion 3D en Godot
+        -> notifica al servidor Python via socket cuando dos avatares se tocan
+      - demo.js                -> portal web multilingue de la DAO 3D
+        -> se conecta al mismo servidor (ver arrancar_servidor)
+
+    Protocolo de socket (NDJSON, una linea por mensaje):
+      Tipos de mensaje entrante:
+        "registrar_miembro"  -> {id, info}
+        "presencia"          -> {issuer_id, witness_id, chunk, pos, ts, nonce,
+                                  sig_issuer, sig_witness}
+        "listar_miembros"    -> {}  (responde con la lista)
+        "listar_propuestas"  -> {}  (lista archivos de Comunidad/)
+        "leer_propuesta"     -> {nombre}
+        "estado"             -> {}  (metricas del servidor)
+      Respuesta: siempre {"ok": bool, ...}
+    """
+
+    # Ruta de la carpeta de propuestas de la comunidad
+    COMUNIDAD_DIR: Path = (
+        Path(__file__).resolve().parents[7]
+        / "VersionDesesion"
+        / "SistemaPrincipal"
+        / "PRY"
+        / "Archivo"
+        / "Comunidad"
+    )
+
+    # Parametros del servidor socket de propuestas
+    HOST_DEFAULT: str = "127.0.0.1"
+    PUERTO_DEFAULT: int = 9876      # distinto al socket neuronal (9875)
+    MAX_PAYLOAD: int = 65_536       # 64 KB por mensaje NDJSON
+
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        puerto: int = 9876,
+        arrancar_servidor: bool = False,
+    ) -> None:
+        # --- Registro de miembros ---
+        self.miembros: Dict[str, Dict[str, Any]] = {}
+        self.lock = threading.Lock()
+
+        # --- Libro mayor de presencia (propuesta PresenceLedger de Comunidad/) ---
+        # Clave: claim_id ("issuer+witness@minuto")  Valor: dict PresenceProof
+        self.ledger_presencia: Dict[str, Dict[str, Any]] = {}
+        self._nonces_vistos: Dict[str, float] = {}   # nonce_key -> timestamp
+
+        # --- Socket server ---
+        self.host = host
+        self.puerto = puerto
+        self._servidor_hilo: Optional[threading.Thread] = None
+        self._servidor_activo: bool = False
+        self._socket_srv: Any = None
+
+        # --- Indice de propuestas cargadas desde Comunidad/ ---
+        self._propuestas_index: Dict[str, str] = {}   # nombre -> ruta str
+        self._indexar_propuestas()
+
+        if arrancar_servidor:
+            self.arrancar_servidor()
+
+    # ------------------------------------------------------------------ #
+    # API basica de miembros                                               #
+    # ------------------------------------------------------------------ #
+
+    def registrar_miembro(self, id_miembro: str, info: Dict[str, Any]) -> None:
+        """Registra o actualiza un miembro de la comunidad."""
+        with self.lock:
+            self.miembros[id_miembro] = {**info, "_ts": time.time()}
+
+    def obtener_miembro(self, id_miembro: str) -> Optional[Dict[str, Any]]:
+        with self.lock:
+            return self.miembros.get(id_miembro)
+
+    def listar_miembros(self) -> List[Dict[str, Any]]:
+        with self.lock:
+            return list(self.miembros.values())
+
+    # ------------------------------------------------------------------ #
+    # Propuesta ProofOfPresence (equivalente Python de ProofOfPresence.cs) #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _claim_id(issuer: str, witness: str, ts: float) -> str:
+        """Clave unica por par de peers por minuto (igual que C# ProofOfPresence.ClaimId)."""
+        a, b = sorted([issuer, witness])
+        return f"{a}+{b}@{int(ts) // 60}"
+
+    @staticmethod
+    def _canonical(issuer: str, witness: str, chunk: str,
+                   x: float, y: float, z: float,
+                   ts: float, nonce: str) -> str:
+        """Cadena canonica para verificacion (misma spec que C# Canonical)."""
+        return "|".join([
+            "WVP1", issuer, witness, chunk,
+            f"{x:.2f}", f"{y:.2f}", f"{z:.2f}",
+            str(int(ts)), nonce,
+        ])
+
+    def _nonce_fresco(self, key: str, nonce: str, max_skew: float = 30.0) -> bool:
+        """True si el nonce no fue visto antes. Limpia los caducados (>10 min)."""
+        ahora = time.time()
+        full_key = f"{key}:{nonce}"
+        with self.lock:
+            expirados = [k for k, t in self._nonces_vistos.items() if ahora - t > 600]
+            for k in expirados:
+                del self._nonces_vistos[k]
+            if full_key in self._nonces_vistos:
+                return False
+            self._nonces_vistos[full_key] = ahora
+        return True
+
+    def registrar_prueba_presencia(self, prueba: Dict[str, Any]) -> Dict[str, Any]:
+        """Recibe y almacena una PresenceProof recibida por socket.
+
+        Valida:
+          1. Que el timestamp sea reciente (<= 60 s de margen).
+          2. Que el nonce no haya sido visto (anti-replay).
+          3. Que el claim_id no exista ya (anti-duplicado por minuto).
+
+        La verificacion de firma ECDSA queda en el lado C#/Godot;
+        aqui registramos el resultado ya validado por el nodo Godot.
+        """
+        ahora  = time.time()
+        issuer = str(prueba.get("issuer_id", ""))
+        witness = str(prueba.get("witness_id", ""))
+        chunk  = str(prueba.get("chunk", ""))
+        ts     = float(prueba.get("ts", 0.0))
+        nonce  = str(prueba.get("nonce", ""))
+        pos    = prueba.get("pos", {})
+
+        if abs(ahora - ts) > 60:
+            return {"ok": False, "motivo": "timestamp demasiado antiguo"}
+        if not issuer or not witness or issuer == witness:
+            return {"ok": False, "motivo": "ids de peer invalidos"}
+        if not self._nonce_fresco(issuer, nonce):
+            return {"ok": False, "motivo": "nonce repetido (replay attack)"}
+
+        cid = self._claim_id(issuer, witness, ts)
+        with self.lock:
+            if cid in self.ledger_presencia:
+                return {"ok": False, "motivo": "prueba duplicada en este minuto"}
+            self.ledger_presencia[cid] = {
+                "issuer_id":     issuer,
+                "witness_id":    witness,
+                "chunk":         chunk,
+                "pos":           pos,
+                "ts":            ts,
+                "nonce":         nonce,
+                "sig_issuer":    prueba.get("sig_issuer", ""),
+                "sig_witness":   prueba.get("sig_witness", ""),
+                "cid_ipfs":      prueba.get("cid_ipfs", ""),
+                "lucia_summary": prueba.get("lucia_summary", ""),
+                "_recibido":     ahora,
+            }
+
+        # Auto-registrar issuer y witness como miembros de la comunidad
+        self.registrar_miembro(issuer,  {"tipo": "peer", "ultimo_chunk": chunk})
+        self.registrar_miembro(witness, {"tipo": "peer", "ultimo_chunk": chunk})
+        return {"ok": True, "cid": cid}
+
+    def encuentros_unicos_semana(self, peer_id: str) -> int:
+        """Peers distintos con los que el peer se ha encontrado en los ultimos 7 dias."""
+        ahora = time.time()
+        semana = 7 * 24 * 3600
+        peers: set = set()
+        with self.lock:
+            for v in self.ledger_presencia.values():
+                if ahora - v["ts"] > semana:
+                    continue
+                if v["issuer_id"] == peer_id:
+                    peers.add(v["witness_id"])
+                elif v["witness_id"] == peer_id:
+                    peers.add(v["issuer_id"])
+        return len(peers)
+
+    def han_coincidido(self, a: str, b: str, minutos: int = 60) -> bool:
+        """True si a y b tienen una prueba de presencia reciente."""
+        ahora = time.time()
+        with self.lock:
+            for v in self.ledger_presencia.values():
+                par = {v["issuer_id"], v["witness_id"]}
+                if par == {a, b} and ahora - v["ts"] < minutos * 60:
+                    return True
+        return False
+
+    # ------------------------------------------------------------------ #
+    # Indexacion de propuestas de Comunidad/                              #
+    # ------------------------------------------------------------------ #
+
+    def _indexar_propuestas(self) -> None:
+        """Escanea Comunidad/ y registra cada archivo en el indice interno."""
+        self._propuestas_index.clear()
+        if not self.COMUNIDAD_DIR.is_dir():
+            return
+        for archivo in sorted(self.COMUNIDAD_DIR.iterdir()):
+            if archivo.is_file():
+                self._propuestas_index[archivo.name] = str(archivo)
+
+    def listar_propuestas(self) -> List[Dict[str, str]]:
+        """Lista las propuestas disponibles en Comunidad/ con nombre y extension."""
+        return [
+            {"nombre": nombre, "ruta": ruta, "tipo": Path(ruta).suffix}
+            for nombre, ruta in self._propuestas_index.items()
+        ]
+
+    def leer_propuesta(self, nombre: str) -> Optional[str]:
+        """Lee el contenido de una propuesta por su nombre de archivo."""
+        ruta = self._propuestas_index.get(nombre)
+        if ruta is None:
+            return None
+        try:
+            return Path(ruta).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+
+    # ------------------------------------------------------------------ #
+    # Servidor TCP/NDJSON — recibe eventos de Godot, web y peers          #
+    # ------------------------------------------------------------------ #
+
+    def arrancar_servidor(self) -> Dict[str, Any]:
+        """Lanza el servidor socket en un hilo daemon.
+
+        Escucha en self.host:self.puerto y acepta conexiones de:
+          - Godot (PresenceArea.cs envia pruebas de presencia)
+          - Portal web (demo.js via proxy envia registros de sesion)
+          - Otros agentes Python de la red P2P
+
+        No bloquea: retorna inmediatamente, el servidor corre en daemon.
+        """
+        import socket as _socket
+
+        if self._servidor_activo:
+            return {"ok": True, "motivo": "ya estaba activo", "puerto": self.puerto}
+
+        try:
+            srv = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+            srv.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+            srv.bind((self.host, self.puerto))
+            srv.listen(8)
+            srv.settimeout(1.0)         # para poder cerrar el hilo sin bloqueo
+            self._socket_srv = srv
+        except OSError as err:
+            return {"ok": False, "motivo": f"no se pudo abrir socket: {err}"}
+
+        self._servidor_activo = True
+        self._servidor_hilo = threading.Thread(
+            target=self._bucle_servidor,
+            daemon=True,
+            name="ComunidadSocketSrv",
+        )
+        self._servidor_hilo.start()
+        return {"ok": True, "puerto": self.puerto, "host": self.host}
+
+    def _bucle_servidor(self) -> None:
+        """Bucle de aceptacion de conexiones (corre en hilo daemon)."""
+        while self._servidor_activo:
+            try:
+                conn, addr = self._socket_srv.accept()
+            except OSError:
+                continue
+            threading.Thread(
+                target=self._atender_cliente,
+                args=(conn, addr),
+                daemon=True,
+            ).start()
+
+    def _atender_cliente(self, conn: Any, addr: Any) -> None:
+        """Atiende una conexion: lee NDJSON, despacha, responde."""
+        import socket as _socket
+        try:
+            conn.settimeout(10.0)
+            datos = bytearray()
+            while b"\n" not in datos:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                datos.extend(chunk)
+                if len(datos) > self.MAX_PAYLOAD:
+                    break
+            linea = datos.split(b"\n")[0].strip()
+            if not linea:
+                return
+            try:
+                msg = json.loads(linea.decode("utf-8", errors="replace"))
+            except (ValueError, UnicodeDecodeError):
+                self._responder(conn, {"ok": False, "motivo": "JSON invalido"})
+                return
+            self._responder(conn, self._despachar_mensaje(msg))
+        except (OSError, _socket.timeout):
+            pass
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def _responder(self, conn: Any, payload: Dict[str, Any]) -> None:
+        try:
+            conn.sendall((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+        except OSError:
+            pass
+
+    def _despachar_mensaje(self, msg: Dict[str, Any]) -> Dict[str, Any]:
+        """Enruta el mensaje segun su tipo."""
+        tipo = str(msg.get("tipo", ""))
+
+        if tipo == "registrar_miembro":
+            id_m = str(msg.get("id", ""))
+            info = msg.get("info", {})
+            if not id_m:
+                return {"ok": False, "motivo": "id requerido"}
+            self.registrar_miembro(id_m, info if isinstance(info, dict) else {})
+            return {"ok": True, "miembros": len(self.miembros)}
+
+        elif tipo == "presencia":
+            # Propuesta PresenceArea / PresenceLedger de Comunidad/
+            return self.registrar_prueba_presencia(msg)
+
+        elif tipo == "listar_miembros":
+            return {"ok": True, "miembros": self.listar_miembros()}
+
+        elif tipo == "listar_propuestas":
+            return {"ok": True, "propuestas": self.listar_propuestas()}
+
+        elif tipo == "leer_propuesta":
+            nombre = str(msg.get("nombre", ""))
+            contenido = self.leer_propuesta(nombre)
+            if contenido is None:
+                return {"ok": False, "motivo": f"propuesta '{nombre}' no encontrada"}
+            return {"ok": True, "nombre": nombre, "contenido": contenido}
+
+        elif tipo == "estado":
+            return {
+                "ok": True,
+                "miembros_total": len(self.miembros),
+                "pruebas_presencia": len(self.ledger_presencia),
+                "propuestas_indexadas": len(self._propuestas_index),
+                "servidor_activo": self._servidor_activo,
+                "puerto": self.puerto,
+            }
+
+        else:
+            return {"ok": False, "motivo": f"tipo de mensaje desconocido: '{tipo}'"}
+
+    def parar_servidor(self) -> None:
+        """Detiene el servidor socket limpiamente."""
+        self._servidor_activo = False
+        if self._socket_srv is not None:
+            try:
+                self._socket_srv.close()
+            except OSError:
+                pass
+            self._socket_srv = None
+
+
 
 CURRENT_FILE: Final[Path] = Path(__file__).resolve()
 GNRL_DIR: Final[Path] = CURRENT_FILE.parent
