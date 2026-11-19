@@ -269,7 +269,7 @@ namespace Visor3D
             var huerfanos = new List<Process>();
             try
             {
-                string consulta = $"SELECT ProcessId, ExecutablePath, CommandLine FROM Win32_Process WHERE Name = '{nombre.Replace("'", "''")}'";
+                string consulta = $"SELECT ProcessId, ParentProcessId, ExecutablePath, CommandLine FROM Win32_Process WHERE Name = '{nombre.Replace("'", "''")}'";
                 using var buscador = new ManagementObjectSearcher(consulta);
                 using var resultados = buscador.Get();
                 foreach (ManagementObject mo in resultados)
@@ -305,6 +305,22 @@ namespace Visor3D
 
                     int pid = Convert.ToInt32(mo["ProcessId"]);
                     if (pid == Environment.ProcessId) continue;
+
+                    // El mismo runtime puede alojar varias sesiones de visor en
+                    // perfiles distintos. Un proceso Godot cuyo padre sigue vivo
+                    // pertenece a otra sesión activa y no es un huérfano.
+                    int parentId = Convert.ToInt32(mo["ParentProcessId"] ?? 0);
+                    if (parentId > 0)
+                    {
+                        try
+                        {
+                            using var parent = Process.GetProcessById(parentId);
+                            if (!parent.HasExited) continue;
+                        }
+                        catch (ArgumentException) { }
+                        catch (InvalidOperationException) { }
+                    }
+
                     try
                     {
                         var proceso = Process.GetProcessById(pid);
@@ -413,8 +429,11 @@ namespace Visor3D
                     // y escribible; así no consume flags ni migra datos reales.
                     string previewData = Path.Combine(
                         AppContext.BaseDirectory, "preview_userdata");
-                    Directory.CreateDirectory(Path.Combine(previewData, "Godot", "app_userdata"));
+                    string previewGodotUserData = Path.Combine(
+                        previewData, "Godot", "app_userdata", "WoldVirtualP2P3D");
+                    Directory.CreateDirectory(previewGodotUserData);
                     psi.Environment["APPDATA"] = previewData;
+                    psi.Environment["WVP_GODOT_USER_DATA_DIR"] = previewGodotUserData;
 #endif
 
                     Console.WriteLine($"[GodotHwndHost] Lanzando proceso Godot: {_godotExePath}");

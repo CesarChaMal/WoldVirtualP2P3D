@@ -1,11 +1,14 @@
 extends CanvasLayer
 ## TeleportPanel: UI lateral colapsable (tecla T o boton). Solo usa TeleportManager.
 
+const INDICE_DAO := -1
+
 var manager: Node = null
 var panel: PanelContainer = null
 var list_box: VBoxContainer = null
 var toggle_btn: Button = null
 var register_btn: Button = null
+var dao_btn: Button = null
 var location_lbl: Label = null
 var _userbase: Node3D = null
 var _expanded := true
@@ -15,6 +18,7 @@ var _current_island := -999 # ultimo indice mostrado (-999 = sin inicializar)
 var _status_timer := 0.0
 var _register_pending := false
 var _register_wait := 0.0
+var _dao_connecting := false
 
 func _ready() -> void:
 	layer = 100
@@ -52,17 +56,24 @@ func _build_ui() -> void:
 
 	toggle_btn = Button.new()
 	toggle_btn.text = "Explorador de islas"
-	toggle_btn.custom_minimum_size = Vector2(190, 36)
+	toggle_btn.custom_minimum_size = Vector2(170, 36)
 	toggle_btn.tooltip_text = "Mostrar u ocultar el explorador (T)"
 	toggle_btn.pressed.connect(_toggle_panel)
 	barra.add_child(toggle_btn)
 
 	register_btn = Button.new()
 	register_btn.text = "Registra tu isla"
-	register_btn.custom_minimum_size = Vector2(170, 36)
+	register_btn.custom_minimum_size = Vector2(160, 36)
 	register_btn.tooltip_text = "Guarda tu isla para recuperarla al volver"
 	register_btn.pressed.connect(_on_register_island_pressed)
 	barra.add_child(register_btn)
+
+	dao_btn = Button.new()
+	dao_btn.text = "🏛 Conectar DAO"
+	dao_btn.custom_minimum_size = Vector2(160, 36)
+	dao_btn.tooltip_text = "Conecta la DAO al metaverso, asegura el túnel efímero y copia el enlace de invitación"
+	dao_btn.pressed.connect(_on_conectar_dao_pressed)
+	barra.add_child(dao_btn)
 
 	location_lbl = Label.new()
 	location_lbl.text = "Isla ?"
@@ -147,7 +158,26 @@ func _refresh_location() -> void:
 	var idx: int = int(manager.call("current_island_index", _userbase.position))
 	if idx == _current_island:
 		return
+	var anterior := _current_island
 	_current_island = idx
+
+	if _current_island == INDICE_DAO:
+		if register_btn != null:
+			register_btn.text = "🏛 Conectar DAO"
+			register_btn.tooltip_text = "Conecta la sede DAO al metaverso, asegura el túnel y copia el enlace"
+		if anterior != -999 and anterior != INDICE_DAO:
+			# El jugador acaba de llegar a la DAO: reconectar siempre (el JSON
+			# fue invalidado al salir, así el _poll_dao detectará el cambio).
+			call_deferred("_auto_conectar_dao")
+	else:
+		# El jugador abandona la DAO: invalidar tunel_dao_url.json marcándolo
+		# como "exito=false" para que al volver _poll_dao dispare un nuevo estado
+		# y _auto_conectar_dao lance una conexión fresca.
+		if anterior == INDICE_DAO:
+			_invalidar_tunel_dao()
+		if register_btn != null:
+			register_btn.text = "Registra tu isla"
+			register_btn.tooltip_text = "Guarda tu isla para recuperarla al volver"
 	# Etiqueta y botón con la isla, su dueño y si la propiedad está registrada.
 	# La DAO también es una entrada válida (índice negativo reservado).
 	var txt := "Mar"
@@ -236,7 +266,10 @@ func _on_goto(index: int) -> void:
 
 
 func _on_register_island_pressed() -> void:
-	if _register_pending:
+	if _register_pending or _dao_connecting:
+		return
+	if _current_island == INDICE_DAO:
+		_on_conectar_dao_pressed()
 		return
 	if manager == null or not manager.has_method("registrar_mi_isla"):
 		_show_status("El gestor de islas todavía no está disponible.", 4.0)
@@ -247,6 +280,48 @@ func _on_register_island_pressed() -> void:
 		register_btn.disabled = true
 	_show_status("Registrando tu isla...", 4.0)
 	manager.call("registrar_mi_isla")
+
+
+func _on_conectar_dao_pressed() -> void:
+	if _dao_connecting:
+		return
+	_dao_connecting = true
+	if dao_btn != null:
+		dao_btn.disabled = true
+	if register_btn != null and _current_island == INDICE_DAO:
+		register_btn.disabled = true
+	_show_status("🏛 Conectando DAO al metaverso y abriendo túnel efímero...", 6.0)
+
+	var res: Dictionary = await _ejecutar_conexion_dao()
+	_dao_connecting = false
+	if dao_btn != null:
+		dao_btn.disabled = false
+	if register_btn != null:
+		register_btn.disabled = false
+
+	var url := str(res.get("enlace", res.get("url", ""))).strip_edges()
+	if not url.is_empty():
+		_show_status("🏛 DAO conectada · Enlace copiado: " + url, 8.0)
+	else:
+		_show_status("🏛 DAO conectada al metaverso", 5.0)
+
+
+func _auto_conectar_dao() -> void:
+	if _dao_connecting:
+		return
+	_dao_connecting = true
+	var res: Dictionary = await _ejecutar_conexion_dao()
+	_dao_connecting = false
+	var url := str(res.get("enlace", res.get("url", ""))).strip_edges()
+	if not url.is_empty():
+		_show_status("🏛 Bienvenido a la DAO · Túnel activo copiado", 6.0)
+
+
+func _ejecutar_conexion_dao() -> Dictionary:
+	var dao := get_tree().get_first_node_in_group("isla_unica_lucia")
+	if dao != null and dao.has_method("conectar_dao_al_metaverso"):
+		return await dao.call("conectar_dao_al_metaverso")
+	return {"ok": false}
 
 
 func _on_isla_registrada(exito: bool, mensaje: String) -> void:
@@ -263,3 +338,32 @@ func _show_status(texto: String, duracion: float) -> void:
 		return
 	location_lbl.text = texto
 	_status_timer = duracion
+
+
+## Invalida tunel_dao_url.json al salir de la DAO para que al volver
+## _poll_dao() detecte el cambio y _auto_conectar_dao() lance reconexión fresca.
+func _invalidar_tunel_dao() -> void:
+	# Resetear flag de estado en la isla para permitir nueva conexión.
+	var dao := get_tree().get_first_node_in_group("isla_unica_lucia")
+	if dao != null:
+		dao.set("_dao_conectada", false)
+	var ruta := "user://tunel_dao_url.json"
+	var datos := {
+		"exito": false,
+		"url": "",
+		"enlace": "",
+		"mensaje": "Túnel DAO liberado — reconectando al volver",
+		"timestamp": Time.get_datetime_string_from_system()
+	}
+	var tmp := ruta + ".tmp"
+	var fw := FileAccess.open(tmp, FileAccess.WRITE)
+	if fw != null:
+		fw.store_string(JSON.stringify(datos))
+		fw.close()
+		DirAccess.rename_absolute(
+			ProjectSettings.globalize_path(tmp),
+			ProjectSettings.globalize_path(ruta)
+		)
+	else:
+		# Si no existe aún, simplemente no hacer nada; _poll_dao lo ignorará.
+		pass

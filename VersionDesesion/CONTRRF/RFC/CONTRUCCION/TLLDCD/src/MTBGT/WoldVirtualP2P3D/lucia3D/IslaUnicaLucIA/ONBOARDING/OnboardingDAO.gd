@@ -24,6 +24,7 @@ const EDITOR_SCENE: PackedScene = preload("res://avatares/EditorAspecto.tscn")
 const VozLucIA = preload("res://lucia3D/IslaUnicaLucIA/ONBOARDING/VozLucIA.gd")
 const Catalogo = preload("res://avatares/CatalogoAvatares.gd")
 const Identidad = preload("res://gdscrip/Identidad.gd")
+const RedSesion = preload("res://gdscrip/Red.gd")
 
 const SUELO_ATRIO := 41.7
 const ALTO_DAIS := 42.2
@@ -32,6 +33,9 @@ const OFICINA_SPAWN := Vector3(0.0, 42.2, 5.2)
 @export var autoprueba := false
 
 var _nick := ""
+var _modular_token := ""
+var _enlace_invitacion := ""
+var _sonda: Node = null
 var _ocupados: Array = []
 var _dao: Node3D = null
 var _interior: Node = null
@@ -51,6 +55,8 @@ var _avatar_id := ""
 var _cruzando := false
 var _fase: StringName = &""
 var _regreso := false
+var _contenedor_miembros_dao: Node3D = null
+var _avatares_miembros_dao: Dictionary = {}
 
 # Sistema Blockchain DAO de 4 bloques en estaciones
 var _bloques_dao: Array = []
@@ -88,6 +94,9 @@ func set_ocupados(plazas: Array) -> void:
 
 
 func _ready() -> void:
+	if OS.get_environment("WVP_DAO_FLOW_TEST") == "1":
+		autoprueba = true
+		print("[OnboardingDAO] Modo de prueba integral activado para este perfil aislado")
 	if get_tree().current_scene == self or get_parent() == get_tree().root:
 		name = "WoldVirtual3DP2P"
 		if get_node_or_null("Sonda") == null:
@@ -147,6 +156,10 @@ func _ready() -> void:
 		_recepcion_ciudadano()
 	else:
 		_secuencia()
+	if ServicioConexionModular.habilitado():
+		if not ServicioConexionModular.miembros_actualizados.is_connected(_actualizar_miembros_dao):
+			ServicioConexionModular.miembros_actualizados.connect(_actualizar_miembros_dao)
+		await ServicioConexionModular.refrescar_miembros(_sonda)
 
 
 # ---------------------------------------------------------------------------
@@ -637,65 +650,126 @@ func _solicitar_nick() -> void:
 	var panel := PanelContainer.new()
 	panel.name = "SolicitudNick"
 	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.offset_left = -220.0
-	panel.offset_right = 220.0
-	panel.offset_top = -70.0
-	panel.offset_bottom = 70.0
+	panel.offset_left = -260.0
+	panel.offset_right = 260.0
+	panel.offset_top = -85.0
+	panel.offset_bottom = 85.0
 	_hud.add_child(panel)
 	var columna := VBoxContainer.new()
+	columna.add_theme_constant_override("separation", 8)
 	panel.add_child(columna)
 	var titulo := Label.new()
-	titulo.text = "Tu nick"
+	titulo.text = "Identidad en la DAO"
 	columna.add_child(titulo)
 	var entrada := LineEdit.new()
 	entrada.max_length = 32
 	entrada.placeholder_text = "Escribe tu nombre"
+	if _nick.is_empty():
+		_nick = "Vecino"
 	entrada.text = _nick
 	columna.add_child(entrada)
-	var confirmar := Button.new()
-	confirmar.text = "Validar nick y conexión"
-	confirmar.disabled = entrada.text.strip_edges().is_empty()
-	columna.add_child(confirmar)
-	entrada.text_changed.connect(func(texto: String): confirmar.disabled = texto.strip_edges().is_empty())
+	var conectar := Button.new()
+	conectar.text = "🏛 CONECTAR PARA VER A TUS VECINOS EN LA DAO"
+	conectar.disabled = false
+	conectar.visible = true
+	columna.add_child(conectar)
 	entrada.text_submitted.connect(func(_texto: String):
-		if not confirmar.disabled:
-			confirmar.pressed.emit())
+		if not conectar.disabled:
+			conectar.pressed.emit())
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	entrada.grab_focus()
 	if autoprueba:
-		entrada.text = "PruebaDAO"
-		confirmar.disabled = false
-		confirmar.call_deferred("emit_signal", "pressed")
+		entrada.text = OS.get_environment("WVP_DAO_TEST_NICK").strip_edges()
+		if entrada.text.is_empty():
+			entrada.text = "PruebaDAO"
 	var estado := Label.new()
 	estado.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	estado.text = "Pincha en conectar para abrir el túnel efímero y ver a tus vecinos en la DAO."
 	columna.add_child(estado)
 	var sonda := get_node_or_null("Sonda")
 	if sonda == null:
 		sonda = get_parent().get_node_or_null("Sonda")
+	_sonda = sonda
+	if ServicioConexionModular.has_method("establecer_sonda"):
+		ServicioConexionModular.establecer_sonda(_sonda)
+	_lucia_dice("Pincha en conectar para ver a tus vecinos en la DAO.", 5.0)
+	if autoprueba:
+		conectar.call_deferred("emit_signal", "pressed")
 	while true:
-		await confirmar.pressed
-		var candidato := entrada.text.strip_edges()
-		if candidato.is_empty():
-			estado.text = "Escribe un nick no vacío."
-			continue
+		await conectar.pressed
+		_nick = entrada.text.strip_edges()
+		if _nick.is_empty():
+			_nick = "Vecino"
 		entrada.editable = false
-		confirmar.disabled = true
-		estado.text = "Validando conexión WebSocket y respuesta del anfitrión…"
+		conectar.disabled = true
+		var objetivo_red: Dictionary = RedSesion.resolver_objetivo()
+		var tunel: Dictionary
+		if bool(objetivo_red.get("is_client", false)):
+			estado.text = "Enlace de invitación detectado. Conectando con el anfitrión…"
+			tunel = {"exito": true, "mensaje": "Conectando con el anfitrión de la invitación."}
+		else:
+			estado.text = "Abriendo el túnel efímero de invitación…"
+			tunel = await _solicitar_tunel_invitacion()
+		if not bool(tunel.get("exito", false)):
+			estado.text = str(tunel.get("mensaje", "El visor no pudo abrir el túnel efímero."))
+			conectar.disabled = false
+			continue
+		_enlace_invitacion = str(tunel.get("enlace", tunel.get("url", ""))).strip_edges()
+		if not _enlace_invitacion.is_empty():
+			DisplayServer.clipboard_set(_enlace_invitacion)
+			estado.text = "Túnel activo. Enlace de invitación copiado. Validando la sesión P2P…"
+		else:
+			estado.text = "Túnel activo. Validando la sesión P2P…"
 		var resultado: Dictionary = {"ok": false, "error": "No hay Sonda de sesión"}
 		if sonda != null:
 			resultado = await sonda.validar_conexion()
-		if bool(resultado.get("ok", false)):
-			_nick = candidato
-			_ocupados = resultado.get("ocupados", []).duplicate()
-			break
-		estado.text = str(resultado.get("error", "Conexión no validada")) + ". Reintenta."
-		entrada.editable = true
-		confirmar.disabled = entrada.text.strip_edges().is_empty()
-		entrada.grab_focus()
+		if not bool(resultado.get("ok", false)):
+			estado.text = str(resultado.get("error", "Conexión no validada")) + ". Reintenta."
+			conectar.disabled = false
+			continue
+		_ocupados = resultado.get("ocupados", []).duplicate()
+		if ServicioConexionModular.habilitado():
+			estado.text = "Sesión P2P lista. Conectando el registro con la DAO…"
+			var conexion: Dictionary = await ServicioConexionModular.conectar(_nick, _sonda)
+			if not bool(conexion.get("ok", false)):
+				estado.text = str(conexion.get("body", {}).get("error", "No se pudo conectar con el servidor DAO."))
+				conectar.disabled = false
+				continue
+			_modular_token = str(conexion.get("body", {}).get("token", ""))
+		estado.text = "Conectado con LucIA. El enlace efímero está copiado para invitar a otra persona."
+		await get_tree().create_timer(1.2).timeout
+		break
 	_carrusel.call("set_ocupados", _ocupados)
 	_carrusel.call("set_nick", _nick)
 	panel.queue_free()
 	await _esperar_voz()
+
+
+func _solicitar_tunel_invitacion() -> Dictionary:
+	# MainWindow.xaml.cs vigila este buzón en user:// y levanta el mismo túnel
+	# efímero que se usa al crear/copiar un enlace de invitación.
+	var ruta_solicitud := ProjectSettings.globalize_path("user://tunel_solicitud.json")
+	var ruta_temporal := ruta_solicitud + ".tmp"
+	var ruta_resultado := ProjectSettings.globalize_path("user://validacion_resultado.json")
+	if FileAccess.file_exists("user://validacion_resultado.json"):
+		DirAccess.remove_absolute(ruta_resultado)
+	var solicitud := FileAccess.open("user://tunel_solicitud.json.tmp", FileAccess.WRITE)
+	if solicitud == null:
+		return {"exito": false, "mensaje": "No se pudo solicitar el túnel al visor."}
+	solicitud.store_string(JSON.stringify({"accion": "conectar", "nick": _nick}))
+	solicitud.close()
+	var renombrar := DirAccess.rename_absolute(ruta_temporal, ruta_solicitud)
+	if renombrar != OK:
+		return {"exito": false, "mensaje": "No se pudo enviar la solicitud del túnel al visor."}
+
+	var limite := Time.get_ticks_msec() + 120000
+	while Time.get_ticks_msec() < limite:
+		if FileAccess.file_exists("user://validacion_resultado.json"):
+			var respuesta: Variant = JSON.parse_string(FileAccess.get_file_as_string("user://validacion_resultado.json"))
+			if respuesta is Dictionary:
+				return respuesta
+		await get_tree().create_timer(0.2).timeout
+	return {"exito": false, "mensaje": "El túnel no respondió en 120 segundos. Revisa la conexión y vuelve a pulsar Conectar."}
 
 
 func _secuencia() -> void:
@@ -759,6 +833,8 @@ func _secuencia() -> void:
 	await _esperar_voz()
 
 	await _registro_estaciones()
+	if not await _registrar_en_servidor_modular():
+		return
 	await _bienvenida_metaverso()
 	await _caminar_al_espejo()
 	_abrir_editor()
@@ -850,6 +926,100 @@ func _inicializar_bloques_dao() -> void:
 	if _ultimo_hash_bloque.is_empty():
 		var semilla := "%s:%d:genesis_dao" % [_nick, Time.get_unix_time_from_system()]
 		_ultimo_hash_bloque = semilla.sha256_text()
+
+
+func _registrar_en_servidor_modular() -> bool:
+	if not ServicioConexionModular.habilitado():
+		return true
+	if _modular_token.is_empty():
+		_lucia_dice("La conexión DAO no quedó preparada. Vuelve a validar tu nick para continuar.", 5.0)
+		return false
+	var respuesta: Dictionary = await ServicioConexionModular.registrar(
+		_modular_token, _nick, _avatar_id, _sonda)
+	if not bool(respuesta.get("ok", false)):
+		var cuerpo: Dictionary = respuesta.get("body", {})
+		_lucia_dice("No se pudo sellar tu registro en el servidor DAO: %s" % str(cuerpo.get("error", "sin respuesta")), 7.0)
+		return false
+	var miembro: Dictionary = respuesta.get("body", {}).get("miembro", {})
+	var miembro_id := str(miembro.get("id", ""))
+	ServicioConexionModular.activar_presencia(miembro_id)
+	await ServicioConexionModular.refrescar_miembros(_sonda)
+	print("[OnboardingDAO] Registro modular confirmado para ", _nick)
+	return true
+
+
+## Representa en la sede a los miembros presentes que vienen del servidor modular.
+## Las escenas de avatar son las mismas del carrusel y del mundo; aquí quedan
+## inmóviles para no interferir con el recorrido ni con los avatares locales.
+func _actualizar_miembros_dao(miembros: Array) -> void:
+	if _dao == null or not is_instance_valid(_dao):
+		return
+	if _contenedor_miembros_dao == null or not is_instance_valid(_contenedor_miembros_dao):
+		_contenedor_miembros_dao = Node3D.new()
+		_contenedor_miembros_dao.name = "MiembrosModularesDAO"
+		_dao.add_child(_contenedor_miembros_dao)
+	var presentes: Dictionary = {}
+	var visibles: Array[Dictionary] = []
+	for item in miembros:
+		if typeof(item) != TYPE_DICTIONARY:
+			continue
+		var miembro: Dictionary = item
+		if bool(miembro.get("isHost", miembro.get("IsHost", false))):
+			continue # LucIA ya está representada por su personaje de la escena.
+		var id := str(miembro.get("id", miembro.get("Id", "")))
+		if id.is_empty():
+			continue
+		presentes[id] = true
+		visibles.append(miembro)
+		if not _avatares_miembros_dao.has(id):
+			var avatar_id := str(miembro.get("avatar", miembro.get("Avatar", "")))
+			var avatar := Catalogo.crear(avatar_id)
+			if avatar == null:
+				push_warning("[DAO] No se pudo cargar el avatar %s del miembro %s" % [avatar_id, str(miembro.get("nick", miembro.get("Nick", "")))])
+				continue
+			avatar.name = "Miembro_" + id
+			avatar.set("es_selector", true)
+			avatar.set_physics_process(false)
+			avatar.set_process_input(false)
+			avatar.set_process_unhandled_input(false)
+			_bloquear_colisiones_avatar(avatar)
+			var placa := Label3D.new()
+			placa.name = "NombreDAO"
+			placa.text = str(miembro.get("nick", miembro.get("Nick", "Miembro")))
+			placa.position.y = 2.05
+			placa.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+			placa.font_size = 32
+			placa.outline_size = 8
+			avatar.add_child(placa)
+			_contenedor_miembros_dao.add_child(avatar)
+			_avatares_miembros_dao[id] = avatar
+	for i in visibles.size():
+		var miembro: Dictionary = visibles[i]
+		var id := str(miembro.get("id", miembro.get("Id", "")))
+		if not _avatares_miembros_dao.has(id):
+			continue
+		var avatar: Node3D = _avatares_miembros_dao[id]
+		var angulo := TAU * float(i) / maxf(float(visibles.size()), 1.0)
+		avatar.position = Vector3(cos(angulo) * 7.0, SUELO_ATRIO, sin(angulo) * 7.0)
+		avatar.look_at(Vector3(0.0, SUELO_ATRIO, 0.0), Vector3.UP)
+	for id in _avatares_miembros_dao.keys():
+		if not presentes.has(str(id)):
+			var avatar: Node = _avatares_miembros_dao[id]
+			if is_instance_valid(avatar):
+				avatar.queue_free()
+			_avatares_miembros_dao.erase(id)
+
+
+func _bloquear_colisiones_avatar(nodo: Node) -> void:
+	if nodo is CollisionShape3D:
+		(nodo as CollisionShape3D).disabled = true
+	elif nodo is CollisionPolygon3D:
+		(nodo as CollisionPolygon3D).disabled = true
+	elif nodo is CollisionObject3D:
+		(nodo as CollisionObject3D).collision_layer = 0
+		(nodo as CollisionObject3D).collision_mask = 0
+	for hijo in nodo.get_children():
+		_bloquear_colisiones_avatar(hijo)
 
 
 func _mostrar_dialogo_estacion_proteccion(estacion: Dictionary) -> void:

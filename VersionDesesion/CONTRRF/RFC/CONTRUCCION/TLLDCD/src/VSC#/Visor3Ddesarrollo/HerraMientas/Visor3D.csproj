@@ -21,16 +21,16 @@
 
     <NoWarn>$(NoWarn);NU1701</NoWarn>
 
-    <AssemblyName>DAOLCDMWoldVirtualP2P3Dv2.9.2</AssemblyName>
-    <Product>DAOLCDMWoldVirtualP2P3Dv2.9.2</Product>
+    <AssemblyName>DAOLCDMWoldVirtualP2P3Dv2.9.5</AssemblyName>
+    <Product>DAOLCDMWoldVirtualP2P3Dv2.9.5</Product>
     <RootNamespace>Visor3D</RootNamespace>
 
-    <Version>2.9.2</Version>
-    <AssemblyVersion>2.9.2.0</AssemblyVersion>
-    <FileVersion>2.9.2.0</FileVersion>
+    <Version>2.9.5</Version>
+    <AssemblyVersion>2.9.5.0</AssemblyVersion>
+    <FileVersion>2.9.5.0</FileVersion>
 
-    <Title>DAOLCDMWoldVirtualP2P3Dv2.9.2</Title>
-    <Description>Visor 3D — DAOLCDMWoldVirtualP2P3Dv2.9.2 (DAO 3D con runtime de LucIA integrado; conversación mediante Ollama y modelo local)</Description>
+    <Title>DAOLCDMWoldVirtualP2P3Dv2.9.5</Title>
+    <Description>Visor 3D — DAOLCDMWoldVirtualP2P3Dv2.9.5 (DAO 3D con runtime de LucIA integrado; túnel efímero y URL visible al arrancar; conexión DAO activa)</Description>
     <LuciaRuntimePath Condition="'$(LuciaRuntimePath)' == ''">$(MSBuildThisFileDirectory)..\..\..\..\..\.dev\rebuild287\lucia_runtime.zip</LuciaRuntimePath>
     <DefineConstants Condition="'$(GodotSourcePreview)' == 'true'">$(DefineConstants);GODOT_SOURCE_PREVIEW</DefineConstants>
   </PropertyGroup>
@@ -154,26 +154,26 @@
          el nombre del fichero versionado en disco. Solo el paquete de la versión
          actual: incrustar un zip de otra versión sería un error silencioso. -->
     <EmbeddedResource Include="..\CopiaDeSeguridad\constructor_godot.zip"
-                      Condition="Exists('..\CopiaDeSeguridad\constructor_godot.zip')"
+                      Condition="'$(GodotSourcePreview)' != 'true' and Exists('..\CopiaDeSeguridad\constructor_godot.zip')"
                       LogicalName="Visor3D.constructor_godot.zip" />
     <EmbeddedResource Include="..\constructor_godot.zip"
-                      Condition="!Exists('..\CopiaDeSeguridad\constructor_godot.zip') and Exists('..\constructor_godot.zip')"
+                      Condition="'$(GodotSourcePreview)' != 'true' and !Exists('..\CopiaDeSeguridad\constructor_godot.zip') and Exists('..\constructor_godot.zip')"
                       LogicalName="Visor3D.constructor_godot.zip" />
     <EmbeddedResource Include="$(ActualizacionVolatilPath)"
-                      Condition="'$(ActualizacionVolatilPath)' != '' and Exists('$(ActualizacionVolatilPath)')"
+                      Condition="'$(GodotSourcePreview)' != 'true' and '$(ActualizacionVolatilPath)' != '' and Exists('$(ActualizacionVolatilPath)')"
                       LogicalName="Visor3D.actualizacion_volatil.zip" />
     <EmbeddedResource Include="..\CopiaDeSeguridad\actualizacion_v2.8.4.zip"
-                      Condition="'$(OmitirPaqueteVolatil)' != 'true' and '$(ActualizacionVolatilPath)' == '' and Exists('..\CopiaDeSeguridad\actualizacion_v2.8.4.zip')"
+                      Condition="'$(GodotSourcePreview)' != 'true' and '$(OmitirPaqueteVolatil)' != 'true' and '$(ActualizacionVolatilPath)' == '' and Exists('..\CopiaDeSeguridad\actualizacion_v2.8.4.zip')"
                       LogicalName="Visor3D.actualizacion_volatil.zip" />
     <EmbeddedResource Include="..\actualizacion_v2.8.4.zip"
-                      Condition="'$(OmitirPaqueteVolatil)' != 'true' and '$(ActualizacionVolatilPath)' == '' and !Exists('..\CopiaDeSeguridad\actualizacion_v2.8.4.zip') and Exists('..\actualizacion_v2.8.4.zip')"
+                      Condition="'$(GodotSourcePreview)' != 'true' and '$(OmitirPaqueteVolatil)' != 'true' and '$(ActualizacionVolatilPath)' == '' and !Exists('..\CopiaDeSeguridad\actualizacion_v2.8.4.zip') and Exists('..\actualizacion_v2.8.4.zip')"
                       LogicalName="Visor3D.actualizacion_volatil.zip" />
     <EmbeddedResource Include="$(DaoPatchPath)"
-                      Condition="'$(DaoPatchPath)' != '' and Exists('$(DaoPatchPath)')"
+                      Condition="'$(GodotSourcePreview)' != 'true' and '$(DaoPatchPath)' != '' and Exists('$(DaoPatchPath)')"
                       LogicalName="Visor3D.dao_patch.pck" />
     <!-- Mundo completo de 2.8.7: la build es autónoma y no depende de la base 2.8.6. -->
     <EmbeddedResource Include="$(MundoPckPath)"
-                      Condition="'$(MundoPckPath)' != '' and Exists('$(MundoPckPath)')"
+                      Condition="'$(GodotSourcePreview)' != 'true' and '$(MundoPckPath)' != '' and Exists('$(MundoPckPath)')"
                       LogicalName="Visor3D.wvp3d.pck" />
     <EmbeddedResource Include="$(LuciaRuntimePath)"
                       Condition="'$(SkipGodotAssets)' != 'true' and Exists('$(LuciaRuntimePath)')"
