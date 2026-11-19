@@ -333,5 +333,14 @@ Thumbs.db
 # Codex temp builds
 VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/codex/
 
+# Caches y artefactos internos en .dev
+VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/CS/.dotnet/
+VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/CS/.nuget/
+VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/CS/build/
+VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/CS/Publicacion/
+VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/CS/tmp/
+VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/CS/runtime/
+VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/rebuild287/
+
 **/.godot/
 
