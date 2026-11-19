@@ -418,21 +418,26 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     elif sub in ("github", "workflows"):
-        accion = argv[1].lower() if len(argv) > 1 else "sincronizar"
+        accion = argv[1].lower() if len(argv) > 1 else "centralizar"
         print("=" * 76)
         print("  GESTIÓN Y CENTRALIZACIÓN DE WORKFLOWS GITHUB ACTIONS (.dev/.github)")
         print("=" * 76)
-        res = sincronizar_github_workflows()
+        exportar = accion in ("desplegar-ci", "exportar", "desplegar")
+        eliminar = not exportar and accion in ("centralizar", "sincronizar", "limpiar", "borrar-raiz")
+        res = sincronizar_github_workflows(eliminar_de_raiz=eliminar, exportar_a_raiz=exportar)
         print(f"Directorio canónico: {DEV_GITHUB_WORKFLOWS_DIR}")
-        print(f"Directorio raíz    : {REPO_ROOT / '.github' / 'workflows'}")
         print(f"Workflows en .dev  : {', '.join(res['canonicos']) if res['canonicos'] else 'Ninguno'}")
-        if res["sincronizados"]:
-            print(f"Sincronizados a raíz: {', '.join(res['sincronizados'])}")
+        if res["eliminados_de_raiz"]:
+            print("[OK] Carpeta .github eliminada de la raíz del repositorio (confinada en .dev).")
+        elif res["exportados_a_raiz"]:
+            print(f"[OK] Workflows desplegados temporalmente en {REPO_ROOT / '.github' / 'workflows'} para CI.")
+        else:
+            print(f"Estado en raíz     : {'Presente' if (REPO_ROOT / '.github').is_dir() else 'Limpia (sin .github en raíz)'}")
         if res["errores"]:
             for e in res["errores"]:
                 print(f"[ERROR] {e}")
             return 1
-        print("[OK] Workflows de GitHub Actions centralizados y sincronizados.")
+        print("[OK] Centralización de GitHub Actions completada.")
         return 0
 
     elif sub in ("escena", "escena-visor", "escena_visor", "fijacion"):

@@ -166,23 +166,24 @@ def traer_pytest_ini() -> bool:
     return movido
 
 
-def sincronizar_github_workflows() -> Dict[str, Any]:
-    """Centraliza los workflows de CI/CD en .dev/.github y sincroniza con .github de la raíz.
+def sincronizar_github_workflows(eliminar_de_raiz: bool = True, exportar_a_raiz: bool = False) -> Dict[str, Any]:
+    """Centraliza los workflows de CI/CD en .dev/.github y elimina la carpeta suelta de la raíz.
 
     Salvaguarda la filosofía del proyecto: toda configuración de desarrollo,
-    archivos .yml y dependencias se alojan canónicamente en .dev, manteniendo
-    la compatibilidad de ejecución con GitHub Actions en la raíz.
+    archivos .yml y dependencias se alojan estrictamente en .dev (.dev/.github).
+    Si exportar_a_raiz=True, permite desplegarlos temporalmente en la raíz para CI remoto.
+    Por defecto, asegura que todo esté guardado en .dev y elimina la carpeta .github de la raíz.
     """
     DEV_GITHUB_WORKFLOWS_DIR.mkdir(parents=True, exist_ok=True)
-    REPO_GITHUB_WORKFLOWS_DIR.mkdir(parents=True, exist_ok=True)
 
     resultado: Dict[str, Any] = {
         "canonicos": [],
-        "sincronizados": [],
+        "eliminados_de_raiz": False,
+        "exportados_a_raiz": False,
         "errores": [],
     }
 
-    # 1. Absorber cualquier workflow nuevo de la raíz hacia .dev/.github
+    # 1. Absorber y asegurar cualquier workflow de la raíz hacia .dev/.github
     if REPO_GITHUB_WORKFLOWS_DIR.is_dir():
         for ruta_raiz in REPO_GITHUB_WORKFLOWS_DIR.glob("*.yml"):
             destino_dev = DEV_GITHUB_WORKFLOWS_DIR / ruta_raiz.name
@@ -192,22 +193,41 @@ def sincronizar_github_workflows() -> Dict[str, Any]:
                     resultado["canonicos"].append(destino_dev.name)
                 except Exception as err:
                     resultado["errores"].append(f"Error al absorber {ruta_raiz.name} hacia .dev: {err}")
-
-    # 2. Sincronizar desde la fuente canónica (.dev/.github) hacia la raíz
-    for ruta_dev in DEV_GITHUB_WORKFLOWS_DIR.glob("*.yml"):
-        destino_raiz = REPO_GITHUB_WORKFLOWS_DIR / ruta_dev.name
-        try:
-            if not destino_raiz.exists() or ruta_dev.stat().st_mtime > destino_raiz.stat().st_mtime:
-                shutil.copy2(ruta_dev, destino_raiz)
-                resultado["sincronizados"].append(ruta_dev.name)
             else:
-                resultado["canonicos"].append(ruta_dev.name)
-        except Exception as err:
-            resultado["errores"].append(f"Error al sincronizar {ruta_dev.name} hacia raíz: {err}")
+                resultado["canonicos"].append(destino_dev.name)
+
+    # Registrar todos los workflows canónicos presentes en .dev
+    for ruta_dev in DEV_GITHUB_WORKFLOWS_DIR.glob("*.yml"):
+        resultado["canonicos"].append(ruta_dev.name)
+
+    # 2. Manejo de la carpeta en la raíz del repositorio
+    if exportar_a_raiz:
+        REPO_GITHUB_WORKFLOWS_DIR.mkdir(parents=True, exist_ok=True)
+        for ruta_dev in DEV_GITHUB_WORKFLOWS_DIR.glob("*.yml"):
+            destino_raiz = REPO_GITHUB_WORKFLOWS_DIR / ruta_dev.name
+            try:
+                shutil.copy2(ruta_dev, destino_raiz)
+            except Exception as err:
+                resultado["errores"].append(f"Error al exportar {ruta_dev.name} a raíz: {err}")
+        resultado["exportados_a_raiz"] = True
+    elif eliminar_de_raiz and REPO_GITHUB_DIR.is_dir():
+        # Verificar que todos los workflows de raíz estén respaldados en .dev antes de borrar
+        archivos_raiz = list(REPO_GITHUB_WORKFLOWS_DIR.glob("*.yml")) if REPO_GITHUB_WORKFLOWS_DIR.is_dir() else []
+        seguro_para_borrar = True
+        for arch in archivos_raiz:
+            if not (DEV_GITHUB_WORKFLOWS_DIR / arch.name).is_file():
+                seguro_para_borrar = False
+                resultado["errores"].append(f"No se borra .github de raíz: {arch.name} no está en .dev")
+                break
+        if seguro_para_borrar:
+            try:
+                shutil.rmtree(REPO_GITHUB_DIR)
+                resultado["eliminados_de_raiz"] = True
+            except Exception as err:
+                resultado["errores"].append(f"Error al eliminar .github de la raíz: {err}")
 
     # Deduplicar
     resultado["canonicos"] = sorted(list(set(resultado["canonicos"])))
-    resultado["sincronizados"] = sorted(list(set(resultado["sincronizados"])))
     return resultado
 
 
