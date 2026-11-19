@@ -12,6 +12,7 @@ Centraliza y orquesta:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -500,6 +501,20 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"\nTotal registros: {len(lineas)}")
         else:
             print("No hay eventos de auditoría registrados todavía.")
+        return 0
+
+    elif sub in ("pytest-cache", "pytest_cache", "cache-pytest"):
+        limpiar_cache_raiz()
+        configurar_variables_entorno()
+        traer_pytest_ini()
+        print("=" * 76)
+        print("  CONFIGURACIÓN CENTRALIZADA DE CACHÉ PYTEST (.dev)")
+        print("=" * 76)
+        print(f"Caché canónico (.dev) : {PYTEST_CACHE_DIR} ({'Existe' if PYTEST_CACHE_DIR.is_dir() else 'No existe'})")
+        print(f"Archivo de config     : {DEV_PYTEST_INI} ({'Existe' if DEV_PYTEST_INI.is_file() else 'No existe'})")
+        print(f"Caché en raíz de repo : {'ELIMINADO / LIMPIO' if not (REPO_ROOT / '.pytest_cache').exists() else 'DETECTADO'}")
+        print(f"PYTEST_ADDOPTS        : {os.environ.get('PYTEST_ADDOPTS', 'No configurado')}")
+        print("[OK] Pytest configurado para operar exclusivamente dentro de .dev/.pytest_cache.")
         return 0
 
     elif sub == "limpiar":

@@ -34,10 +34,13 @@
     </Task>
   </UsingTask>
 
-  <Target Name="WoldGenerarInfoVersion" BeforeTargets="CoreCompile"
+  <Target Name="WoldGenerarInfoVersion" BeforeTargets="BeforeCompile;CoreCompile"
           Inputs="$(MSBuildThisFileDirectory)..\VERSION.json"
           Outputs="$(IntermediateOutputPath)WoldInfoVersion.g.cs">
     <WoldEscribirInfoVersion Version="$(WoldVersion)" Motor="$(WoldMotor)"
                              Salida="$(IntermediateOutputPath)WoldInfoVersion.g.cs" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)WoldInfoVersion.g.cs" />
+    </ItemGroup>
   </Target>
 </Project>

@@ -1,95 +1,85 @@
-# Resultados T1 y Consolidación Inicial — Plan de Desarrollo (2026-11-19)
+# Resultados T1 + F1 y Consolidación (~38% del Plan de Desarrollo · 2026-11-19)
 
-Avance verificado del tramo inicial (~18%) del [plan_desarrollo_boy_2026-11-19.md](plan_desarrollo_boy_2026-11-19.md).
-Consolidado e integrado en la rama canónica **`DevAntigravityIDEIA`** tras resolver el merge de `DevQoderIA` y centralizar la jerarquía modular en `.dev`. Sin merge a `main`.
+Avance verificado del tramo acumulado (~38%) del [plan_desarrollo_boy_2026-11-19.md](plan_desarrollo_boy_2026-11-19.md).
+Consolidado e integrado en la rama canónica **`DevAntigravityIDEIA`** tras resolver el merge de `DevQoderIA`, centralizar la jerarquía modular y CI en `.dev`, resolver la caché de pytest en `.dev/.pytest_cache`, cerrar la versión única C# (T1-02 Fase B) y consolidar el supervisor de túneles y watchdog (F1 · T2-01 a T2-06). Sin merge a `main`.
 
 ---
 
 ## 1. Lo Ya Hecho (Completado y Verificado en `DevAntigravityIDEIA`)
 
-### 1.1 T1-04 · Triar `transport.py` (Resuelto y neutralizado)
-- `STM_HRTS/STM_DEF/utils/transport.py` fue auditado: se confirmó como el stub neutralizado del incidente R-01 (hallazgo **R01b**).
-- Se retiró la importación residual `import utils.transport` de `STM_HRTS/STM_DEF/__main__.py`.
-- La función inerte `cargar()` lanza `RuntimeError` explícito ante cualquier invocación. Se conserva el stub inerte como evidencia auditada sin vulnerabilidad activa.
+### 1.1 Centralización de Caché Pytest en `.dev/.pytest_cache`
+- Se eliminó la carpeta `.pytest_cache` suelta de la raíz del repositorio.
+- Se configuró `modulos/entorno.py` con `PYTEST_ADDOPTS = "-o cache_dir=.dev/.pytest_cache -c .dev/pytest.ini"`.
+- `run_pytest.bat` y `run_pytest.ps1` inyectan automáticamente `PYTEST_ADDOPTS`.
+- Se añadió el subcomando `python gestor_entorno.py pytest-cache` y salvaguardas en `limpiar_cache_raiz()`.
+- `.gitignore` configurado para ignorar `**/.pytest_cache/` y `/.pytest_cache/`.
 
-### 1.2 T1-05 · Localización e Integración de `SshTunnelWatchdog.cs`
-- Se localizó `SshTunnelWatchdog.cs` en la rama `DevAntigravityIDEIA`.
-- Al realizar el merge de `DevQoderIA` hacia `DevAntigravityIDEIA` (commit `0a4dd01c`), se unificó e integró formalmente en el árbol canónico bajo `VSC#/Visor3Ddesarrollo/RedP2P/SshTunnelWatchdog.cs`.
-- Se resolvió la brecha de deriva B-04 para este componente.
+### 1.2 T1-02 (Fase A y Fase B) · Fuente Única de Versión (100% CERRADO)
+- `src/VERSION.json` verificado (`2.9.5`, motor `4.7.2`).
+- `VSC#/Directory.Build.props` y `Directory.Build.targets` generan `obj/WoldInfoVersion.g.cs` de forma reproducible.
+- Eliminados todos los literales hardcodeados de versión:
+  - `HerraMientas/Visor3D.csproj`: `$(WoldVersion)` en AssemblyName, Product, Version, AssemblyVersion, FileVersion, Title, Description.
+  - `VisorLinux/VisorLinux.csproj`: `$(WoldVersion)` en Version y Description.
+  - `Tests/Visor3DTests.csproj`: `$(WoldVersion)` en Version.
+  - `VisorLinux/Linux/RutasLinux.cs`: utiliza `WoldInfoVersion.Version` y `WoldInfoVersion.Motor`.
+  - `AppExtractor.cs`, `GodotConfig.cs` y `MainWindow.xaml.cs`: motor Godot referenciado dinámicamente con `WoldInfoVersion.Motor`.
+- `version_unica.CSPROJ` actualizado con los proyectos reales (`HerraMientas/Visor3D.csproj`, `VisorLinux/VisorLinux.csproj`, `Tests/Visor3DTests.csproj`).
+- **Pruebas en verde**: `pytest tests/STM_test3/test_version_unica.py` (14 passed, 1 skipped); `version_unica.py --comprobar` OK.
+- `dotnet build Visor3D.csproj -p:SkipGodotAssets=true` compila con **0 errores**.
 
-### 1.3 T1-03 · Inventario de copias del árbol C# (Archivado)
-- Conteo y mapeo completado bajo `VSC#/Visor3Ddesarrollo`:
-  - `HerraMientas/`: 72 ficheros `.cs` (visor activo, compilación real).
-  - `Actualizaciones/LCDMWoldVirtualP2P3Dv2.8.5/`: 130 ficheros `.cs` (snapshot viejo).
-  - `Actualizaciones/LCDMWoldVirtualP2P3Dv2.8.6/`: 142 ficheros `.cs` (snapshot viejo).
-  - `Actualizaciones/DAOLCDMWoldVirtualP2P3Dv2.9.3/`: 1 fichero `.cs` (fragmento).
-  - `VisorLinux/`: 27 ficheros `.cs` (proyecto Avalonia).
-  - Módulos compartidos: `Chat/`, `RedP2P/`, `Services/`, `Seguridad/`, `p2pipfsCS/`.
-- Identificados duplicados (`AppExtractor.cs`, `GodotConfig.cs`, `MainWindow.xaml.cs`) para consolidación progresiva sin mover rutas canónicas.
+### 1.3 F1 · Túneles SSH Estables en Distribución (#141, #143, #131 · 100% CERRADO)
+- **T2-01 (Confinamiento de `cloudflared.exe`)**:
+  - `P2PWebNode.cs`, `P2PTunnelManager.cs` y `P2PTunnelSupervisor.cs` buscan o descargan `cloudflared.exe` exclusivamente en `%LOCALAPPDATA%\WoldVirtualP2P3D\bin\cloudflared.exe`. Nunca se guarda en el repositorio ni en la carpeta base.
+  - Si falta o no hay red, realiza fallback inmediato y transparente a los servidores SSH.
+- **T2-02 (Supervisor Unificado y PIDs)**:
+  - Implementado `P2PTunnelSupervisor.cs` bajo `Visor3D.RedP2P`, orquestando los 3 slots (`p2p` en 7890, `webnodo` en 8082, `dao` en 7892).
+  - Integrado `TunnelProcessRegistry` en todos los slots: persiste PIDs en `tunnel-{slot}.pid` y realiza barrido de huérfanos al arrancar (`BarrerHuerfano`).
+- **T2-03 (Watchdog WebNodo)**:
+  - Implementado `RunWebNodeTunnelWatchdogAsync` en `P2PWebNode.cs`: detecta caídas de proceso con `WaitForExitAsync`, reconecta automáticamente con backoff exponencial (5s a 30s) y emite `OnTunnelDied` / `OnTunnelReconnected`.
+- **T2-04 (Observabilidad Unificada)**:
+  - Implementado `TunnelLogger`: todas las trazas de túneles (`P2PTunnelSupervisor`, `SshTunnelWatchdog`, `P2PWebNode`, `P2PTunnelManager`) se escriben a `%LOCALAPPDATA%\WoldVirtualP2P3D\logs\tunnel.log` con rotación a 10 MB.
+- **T2-05 (Robustez SSH y Regex)**:
+  - Regex `.lhr.life` y opciones de robustez (`-o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o ConnectTimeout=15`) aplicadas en todos los proveedores SSH (`localhost.run`, `serveo.net`).
+- **T2-06 (Modo Degradado en UI)**:
+  - Propiedad `EsModoDegradado` / `IsDegradedMode` expuesta.
+  - `MainWindow.xaml.cs` refleja en `TxtEstadoP2P` y en `validacion_resultado.json`: `"🟢 Cloudflare Túnel"` vs `"🟡 Modo degradado (SSH gratuito)"`.
 
-### 1.4 T1-02 (Fase A) · Fuente Única de Versión (Verificada)
-- `src/VERSION.json` creado: `version 2.9.5`, `motor 4.7.2`, ancla del PCK `CopiaDeSeguridad/wvp3d.pck` (sha256 `9c943921…`, 509.257.972 B).
-- `VSC#/Directory.Build.props` creado: expone `$(WoldVersion)`, `$(WoldMotor)` y `$(WoldVersionFull)` con guardas fail-closed (`<Error>` si falta tabla o campo).
-- `VSC#/Directory.Build.targets` creado: genera `obj/WoldInfoVersion.g.cs` de forma reproducible (tarea inline Roslyn).
-- Verificado:
-  - `version_unica.py --leer` → `2.9.5`.
-  - `dotnet msbuild -getProperty:WoldVersion` → `2.9.5`.
-  - `dotnet build -p:SkipGodotAssets=true` → **0 errores**.
-
-### 1.5 T1-01 & Centralización Modular de CI en `.dev/.github`
-- Workflows de CI (`ci.yml` y `stm_def.yml`) configurados para la ruta canónica `VersionDesesion/CONTRRF/RFC/CONTRUCCION/TLLDCD/src`.
-- **Centralización estricta en `.dev`**: siguiendo las directrices de contención del repositorio, la carpeta `.github` se trasladó y confinó en `.dev/.github/workflows/`, eliminándola de la raíz del repositorio para no tener dependencias ni `.yml` desperdigados.
-- Se configuró `.gitignore` para rastrear `!VersionDesesion/**/.dev/.github/`.
-- `gestor_entorno.py` y sus submódulos gestionan la centralización mediante los subcomandos `python gestor_entorno.py github [centralizar|desplegar-ci]`.
-
-### 1.6 Fijación de Escena Canónica `res://WoldVirtual3DP2P.tscn`
-- Escena fijada con UID `uid://5bh8su08n101` en `MTBGT/WoldVirtualP2P3D/WoldVirtual3DP2P.tscn`.
-- Verificado `run/main_scene="uid://5bh8su08n101"` en `project.godot`.
-- Invariante protegido en `GodotConfig.cs` (`GetScenePath() => "res://WoldVirtual3DP2P.tscn"`) y `MainWindow.xaml.cs`.
-- Módulo `visor_mgr.py` incluye `verificar_fijacion_escena()` y el comando `python gestor_entorno.py escena-visor` (verificación: `[OK] FIJADA`, sin acoplamiento a versiones previas).
-
-### 1.7 Entorno Python Canónico (.dev/.python)
-- Intérprete canónico verificado: **Python 3.15.2 (amd64)** en `.dev/.python/python.exe`.
-- Suite de pruebas de seguridad Zero Trust ejecutada bajo Python 3.15.2: **20 pruebas pasadas (100% verde)**.
-- Integrado en `gestor_entorno.py dependencias` e informe general.
-
-### 1.8 T2-05 · Regex y Opciones SSH del Túnel (Anticipada y Verificada)
-- `P2PWebNode.cs`: regex actualizada a `@"https://[\w\-]+\.lhr\.life"`.
-- Opciones de robustez añadidas en `MainWindow.xaml.cs` y `P2PWebNode.cs`: `-o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes` para candidatos `localhost.run` y `serveo.net`.
+### 1.4 Hitos Previos Verificados
+- Triaje y neutralización R01b de `transport.py`.
+- Integración de `SshTunnelWatchdog.cs`.
+- Inventario de copias del árbol C# (72/130/142 ficheros).
+- Centralización modular de CI en `.dev/.github/workflows/` (raíz limpia).
+- Fijación de escena canónica `res://WoldVirtual3DP2P.tscn` (`uid://5bh8su08n101`).
+- Entorno Python canónico `.dev/.python/python.exe` (3.15.2 amd64), 20 pruebas Zero Trust en verde (100%).
 
 ---
 
-## 2. Lo Pendiente Especificado (Backlog Inmediato)
+## 2. Lo Pendiente Especificado (Backlog Inmediato a Partir del 38%)
 
-### 2.1 Cierre de T1-02 (Fase B — Adaptación Completa de csproj)
-Listado exacto de comprobaciones pendientes para dejar `test_version_unica.py` en verde:
-1. **Actualizar rutas en `version_unica.CSPROJ`**: sustituir referencias a `Visor3D.csproj` y `Nucleo/Nucleo.csproj` inexistentes por:
-   - `Visor3Ddesarrollo/HerraMientas/Visor3D.csproj`
-   - `Visor3Ddesarrollo/VisorLinux/VisorLinux.csproj`
-   - `Visor3Ddesarrollo/Tests/Visor3DTests.csproj`
-2. **Convertir literales de versión en `.csproj`**:
-   - `HerraMientas/Visor3D.csproj`: retirar versiones hardcodeadas `v2.9.5` en AssemblyName, Product, Version, AssemblyVersion, FileVersion, Title, Description.
-   - `VisorLinux/VisorLinux.csproj`: reemplazar `<Version>2.8.0</Version>` por la variable unificada.
-3. **`RutasLinux.cs` (líneas 15-16)**: reemplazar `Version = "2.7.9"` y motor hardcodeado por `WoldInfoVersion`.
-4. **Motor Godot hardcodeado**: extraer `Godot_v4.7.2-stable_win64.exe` desde `WoldInfoVersion.NombreMotor` en `AppExtractor.cs` (60, 173), `GodotConfig.cs` (204) y `MainWindow.xaml.cs` (1683, 1685, 1707).
-5. **Comprobación verde**: ejecutar `pytest tests/STM_test3/test_version_unica.py` y verificar salida sin exclusiones.
-
-### 2.2 F1 — Túneles SSH Estables en Distribución (#141, #143, #131)
-- **T2-01**: Resolver empaquetado o descarga de `cloudflared.exe` a `%LOCALAPPDATA%\WoldVirtualP2P3D\` al primer arranque (sin incluir `.exe` en git).
-- **T2-02**: Unificar `P2PTunnelManager` y `SshTunnelWatchdog` bajo un único supervisor unificado de túneles (todos los slots delegan en él; PIDs en `TunnelProcessRegistry`).
-- **T2-03**: Watchdog para reconexión automática de WebNodo con visualización de estado en UI.
-- **T2-04**: Redirigir trazas de túneles a `%LOCALAPPDATA%\WoldVirtualP2P3D\logs\tunnel.log` en lugar de `Debug.WriteLine`.
-- **T2-06**: UI: indicar «Modo degradado (SSH gratuito)» vs «Cloudflare» en la barra de estado.
-
-### 2.3 F2 — IPC Visor ↔ Godot sin Archivos (#140)
-- **T3-01**: Definir sustituto de `user://*.json` (Named Pipes `\\.\pipe\WoldVirtualIPC` o WebSocket loopback).
+### 2.1 F2 — IPC Visor ↔ Godot sin Archivos (#140 · L)
+- **T3-01**: Sustituir `user://*.json` (`tunel_solicitud`, `tunel_lucia_url`, `tunel_dao_url`, `validacion_resultado`) por Named Pipes (`\\.\pipe\WoldVirtualIPC`) o WebSocket loopback.
 - **T3-02**: Máquina de estados de red unificada (`Desconectado/Conectando/TúnelActivo/Error/Reconectando`) desacoplada del panel de teletransporte.
 - **T3-03**: Validación de esquema y timeouts con backoff exponencial.
 - **T3-04**: Limpieza de artefactos obsoletos de sesiones previas en `user://`.
 
-### 2.4 Fases Subsiguientes del Plan Master (F3 a F7)
-- **F3 — Zero-Trust y SMTPLC**: `NamedMutex` cross-process en `AlmacenSeguro`, provisionamiento TPM 2.0 (`--provision-tpm`), checkpoints canónicos (`ICheckpointTestigo`).
-- **F4 — Fortalecer pruebas**: suites de `medicion_modos.py`, `stm_flujo.py`, `stm_gestion.py` y cobertura xUnit.
-- **F5 — Godot / Mundo**: Re-exportar `wvp3d.pck` limpio sin `AVATARES/` y corregir `PackedInt32Array` en `Personalizacion.gd:952`.
-- **F6 — LucIA**: Versionado limpio de `puente_3D` y pruebas de `LucIAPuenteComandos` con agente falso inyectado (sin Ollama).
-- **F7 — Empaquetado y Distribución**: Pipeline reproducible de un comando para `.exe` + PCK + ZIP firmado con SHA256SUMS.
+### 2.2 F3 — Zero-Trust y SMTPLC (#122, #26 · L)
+- **T4-01**: `NamedMutex` cross-process en `AlmacenSeguro` (`Global\WVP3D_Storage_Mutex`) contra contienda sobre `cadena_local.jsonl`.
+- **T4-02**: CLI `--provision-tpm` con elevación UAC (índice NV `0x01500001`).
+- **T4-03**: Checkpoints canónicos cada 100 bloques (`ICheckpointTestigo`).
+- **T4-04**: Vistas WPF `RegistroCuentaView` / `RecuperacionNivel3View` conectadas solo a `INucleoSeguro`.
+- **T4-05**: SMTPLC: cerrar D5/D8; extraer interfaces (`INetworkEnvironmentProvider`, `ISystemInfoProvider`) para pruebas con mocks.
+
+### 2.3 F4 — Fortalecer Pruebas (paralelo · #79–#83, #48 · M)
+- **T5-01**: `medicion_modos.py`: JSON consistente, `time.monotonic()`, escritura atómica.
+- **T5-02**: `stm_flujo.py`: eliminar duplicados, límites de fragmentos y solape real.
+- **T5-03**: `stm_gestion.py`: reemplazo transaccional y verificación por hash.
+
+### 2.4 F5 — Godot / Mundo (#141 H2, #94 · M)
+- Re-exportar `wvp3d.pck` limpio sin `AVATARES/`.
+- Corregir `PackedInt32Array` en `Personalizacion.gd:952`.
+
+### 2.5 F6 — LucIA (#124, #130 · M)
+- Versionado limpio de `puente_3D` y pruebas de `LucIAPuenteComandos` con agente falso inyectado.
+
+### 2.6 F7 — Empaquetado y Distribución (#90, #141 · L)
+- Pipeline reproducible de un comando para `.exe` + PCK + ZIP firmado con SHA256SUMS.

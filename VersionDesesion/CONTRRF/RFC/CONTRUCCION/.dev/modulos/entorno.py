@@ -92,6 +92,7 @@ def configurar_variables_entorno() -> Dict[str, str]:
         "WVP_PYTHON": str(py_activo),
         "DOTNET_CLI_TELEMETRY_OPTOUT": "1",  # Evita errores de registro/seguridad en Windows
         "PYTEST_CACHE_DIR": str(PYTEST_CACHE_DIR),
+        "PYTEST_ADDOPTS": f"-o cache_dir={PYTEST_CACHE_DIR} -c {DEV_PYTEST_INI}",
         "RUFF_CACHE_DIR": str(RUFF_CACHE_DIR),
         # Todo bytecode compilado del ecosistema se escribe en .dev/pycache
         "PYTHONPYCACHEPREFIX": str(PYCACHE_DIR),
@@ -389,7 +390,18 @@ def ejecutar_pytest(args: Optional[List[str]] = None) -> int:
         f"cache_dir={PYTEST_CACHE_DIR}",
     ]
     if args:
-        args_completos.extend(args)
+        for a in args:
+            if not a.startswith("-"):
+                p_dev = DEV_DIR / a
+                p_root = REPO_ROOT / a
+                if p_dev.exists():
+                    args_completos.append(str(p_dev))
+                elif p_root.exists():
+                    args_completos.append(str(p_root))
+                else:
+                    args_completos.append(a)
+            else:
+                args_completos.append(a)
     else:
         args_completos.append(str(DEV_DIR / "tests"))
 

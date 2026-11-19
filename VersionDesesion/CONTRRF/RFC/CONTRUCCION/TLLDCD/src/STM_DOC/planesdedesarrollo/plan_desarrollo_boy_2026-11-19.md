@@ -7,7 +7,7 @@
 | **Versión en el árbol** | `2.9.5` (`VERSION.json`, `Visor3D.csproj`, `AssemblyName = DAOLCDMWoldVirtualP2P3Dv2.9.5`) |
 | **Ruta canónica** | `VersionDesesion/CONTRRF/RFC/CONTRUCCION/TLLDCD/src` |
 | **Fecha del análisis** | 2026-11-19 |
-| **Avance actual** | **~18% completado (Tramo T1 / Higiene, CI y fuente única consolidada en `.dev`)** |
+| **Avance actual** | **~38% completado (T1 higiene y fuente única 100% + F1 túneles y supervisor 100% + caché pytest en .dev)** |
 | **Issues abiertos de referencia** | 23 (ver §8) |
 | **PRs de debate abiertos** | 7 (#124, #130, #135, #136, #137, #141, #145) — **no son merge, son RFC/debate** |
 | **Documento de cabecera que respeta** | `STM_DOC/Desarrollo/README_DESARROLLO.md` + `README_PLAN_DE_DESARROLLO.md` (plan v2.7.8/v2.7.9, histórico) |
@@ -80,19 +80,19 @@ Inventario T1-03 archivado. Merge de `DevQoderIA` hacia `DevAntigravityIDEIA` ce
 ## 4. Fases y tareas
 
 ```
-T1 higiene+CI+fuente única (18% HECHO) ─▶ F1 túneles SSH ─▶ F2 IPC visor↔Godot ─▶ F3 Zero-Trust/SMTPLC
+T1 higiene+CI+fuente única (100% HECHO) ─▶ F1 túneles SSH (100% HECHO) ─▶ F2 IPC visor↔Godot ─▶ F3 Zero-Trust/SMTPLC
                                               │                                   └▶ F5 Godot/mundo ─▶ F7 empaquetado
                                               └▶ F4 pruebas (paralelo) ─▶ F6 LucIA (paralelo)
 ```
 
 ---
 
-### T1 — Higiene, CI y fuente única (~18% del plan · Estado: CONSOLIDADO)
+### T1 — Higiene, CI y fuente única (Estado: CONSOLIDADO 100%)
 
 | ID | Tarea | Esf. | Estado | Detalle de lo hecho y pendiente |
 |---|---|---|---|---|
 | **T1-01** | Workflows de CI: build C# + xUnit, pytest estricta, `STM_DEF puerta`. | M | **HECHO** | Creados y centralizados en `.dev/.github/workflows/` (raíz limpia de .github; gestionables por `gestor_entorno.py`). |
-| **T1-02** | `VERSION.json` + `Directory.Build.props/targets`; eliminar literales del `.csproj`; `version_unica --comprobar`. | M | **PARCIAL** | **Fase A (Hecha):** `VERSION.json` (2.9.5) y `Directory.Build.*` operativos.<br>**Fase B (Pendiente):** retirar literales en `Visor3D.csproj`, `VisorLinux.csproj`, `RutasLinux.cs`, hardcodeos de motor y dejar `test_version_unica.py` en verde. |
+| **T1-02** | `VERSION.json` + `Directory.Build.props/targets`; eliminar literales del `.csproj`; `version_unica --comprobar`. | M | **HECHO** | **Fase A y B completadas:** `VERSION.json` (2.9.5), `Directory.Build.*` generan `WoldInfoVersion.g.cs`. Literales retirados de `Visor3D.csproj`, `VisorLinux.csproj`, `Tests/Visor3DTests.csproj`, `RutasLinux.cs`, `AppExtractor.cs`, `GodotConfig.cs` y `MainWindow.xaml.cs`. `test_version_unica.py` en verde 100% (14 passed, 1 skipped). |
 | **T1-03** | Inventario de copias (`HerraMientas/` vs `Desarrollo/` vs `Actualizaciones/*`). | M | **HECHO** | Mapeo y conteo de 72/130/142 ficheros `.cs` archivado en `resultados_T1_2026-11-19.md`. |
 | **T1-04** | Triar `STM_HRTS/STM_DEF/utils/transport.py`: ¿vector R-01 o módulo legítimo? | S | **HECHO** | Veredicto R01b: stub inerte documentado, función `cargar()` con `RuntimeError`, import retirado de `__main__.py`. |
 | **T1-05** | Localizar e integrar `SshTunnelWatchdog.cs` (referido en #143). | S | **HECHO** | Localizado en `DevAntigravityIDEIA`, mergeado e integrado en `RedP2P/SshTunnelWatchdog.cs`. |
@@ -101,16 +101,16 @@ T1 higiene+CI+fuente única (18% HECHO) ─▶ F1 túneles SSH ─▶ F2 IPC vis
 
 ---
 
-### F1 — Túneles SSH estables en distribución (#141, #143, #131 · L) — [PENDIENTE]
+### F1 — Túneles SSH estables en distribución (#141, #143, #131 · L) — [CONSOLIDADO 100%]
 
-| ID | Tarea | Esf. | Estado |
-|---|---|---|---|
-| **T2-01** | Empaquetar o descargar `cloudflared.exe` a `%LOCALAPPDATA%\WoldVirtualP2P3D\` al primer arranque (decidir D2); no depender de que exista en la carpeta. | M | Pendiente |
-| **T2-02** | Unificar `P2PTunnelManager` + watchdog (`SshTunnelWatchdog`) bajo **un solo supervisor** (todos los slots p2p/webnodo/dao delegan en él); centralizar PIDs en `TunnelProcessRegistry`. | L | Pendiente |
-| **T2-03** | Watchdog del túnel WebNodo: relanzar proceso caído y estado «caído» visible en UI (H5 de #141). | M | Pendiente |
-| **T2-04** | Observabilidad: log a fichero (`%LOCALAPPDATA%\WoldVirtualP2P3D\logs\tunnel.log`) en vez de `Debug.WriteLine`/`Console.WriteLine`. | S | Pendiente |
-| **T2-05** | Revisar regex/orden de proveedores en `P2PWebNode` + opciones SSH (`ServerAliveCountMax`, `ExitOnForwardFailure=yes`). | S | **Anticipado (Hecho)**: `MainWindow.xaml.cs` y `P2PWebNode.cs` alineados con `.lhr.life` y opciones de robustez. |
-| **T2-06** | UI: indicar «Modo degradado (SSH gratuito)» vs «Cloudflare» en la barra de estado. | S | Pendiente |
+| ID | Tarea | Esf. | Estado | Detalle de lo hecho |
+|---|---|---|---|---|
+| **T2-01** | Descarga/búsqueda de `cloudflared.exe` confinada en `%LOCALAPPDATA%\WoldVirtualP2P3D\bin\` al primer arranque; no depender de que exista en git (`*.exe` en `.gitignore`). | M | **HECHO** | `P2PWebNode.cs`, `P2PTunnelManager.cs` y `P2PTunnelSupervisor.cs` confinan la ruta en LocalAppData bin; nunca se escribe en el repositorio. Fallback limpio a SSH si no está presente o falla red. |
+| **T2-02** | Unificar `P2PTunnelManager` + watchdog (`SshTunnelWatchdog`) bajo **un solo supervisor**; centralizar PIDs en `TunnelProcessRegistry`. | L | **HECHO** | Creado `P2PTunnelSupervisor.cs` coordinando slots `p2p`, `webnodo` y `dao`, integrando persistencia/barrido de huérfanos con `TunnelProcessRegistry` en todos los procesos. |
+| **T2-03** | Watchdog del túnel WebNodo: relanzar proceso caído y estado visible en UI (H5 de #141). | M | **HECHO** | Implementado `RunWebNodeTunnelWatchdogAsync` en `P2PWebNode.cs` con backoff exponencial (5s a 30s) y eventos de reconexión. |
+| **T2-04** | Observabilidad: log a fichero (`%LOCALAPPDATA%\WoldVirtualP2P3D\logs\tunnel.log`) en vez de solo `Debug.WriteLine`. | S | **HECHO** | `TunnelLogger` centralizado y rotativo (10 MB); `SshTunnelWatchdog.cs`, `P2PTunnelSupervisor.cs`, `P2PWebNode.cs` y `P2PTunnelManager.cs` unificados en el mismo fichero de log. |
+| **T2-05** | Revisar regex/orden de proveedores en `P2PWebNode` + opciones SSH (`ServerAliveCountMax`, `ExitOnForwardFailure=yes`). | S | **HECHO** | `MainWindow.xaml.cs`, `P2PWebNode.cs` y `P2PTunnelSupervisor.cs` alineados con `.lhr.life` y opciones de robustez SSH. |
+| **T2-06** | UI: indicar «Modo degradado (SSH gratuito)» vs «Cloudflare» en la barra de estado y `validacion_resultado.json`. | S | **HECHO** | Expuesto `EsModoDegradado` / `IsDegradedMode` en supervisores y reflejado en `TxtEstadoP2P` y `validacion_resultado.json` para consumo de Godot. |
 
 **Evidencia exigida (E-F1):** Prueba con dos redes externas — túnel se publica, reconecta tras caída, URL rota con caducidad, cierre seguro; captura de log con causa.
 
