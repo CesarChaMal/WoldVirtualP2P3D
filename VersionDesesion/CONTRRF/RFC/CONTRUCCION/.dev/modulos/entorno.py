@@ -13,6 +13,8 @@ from typing import Dict, List, Optional
 
 from .rutas import (
     DEV_DIR,
+    DEV_GITHUB_DIR,
+    DEV_GITHUB_WORKFLOWS_DIR,
     DEV_PYTEST_INI,
     PRY_DIR,
     PYCACHE_DIR,
@@ -20,6 +22,8 @@ from .rutas import (
     PYTHON_DIR,
     PYTHON_EXE,
     PYTHONW_EXE,
+    REPO_GITHUB_DIR,
+    REPO_GITHUB_WORKFLOWS_DIR,
     REPO_ROOT,
     RFC_DIR,
     RUFF_CACHE_DIR,
@@ -160,6 +164,74 @@ def traer_pytest_ini() -> bool:
         print(f"[OK] pytest.ini inicializado en: {ini_dev}")
 
     return movido
+
+
+def sincronizar_github_workflows() -> Dict[str, Any]:
+    """Centraliza los workflows de CI/CD en .dev/.github y sincroniza con .github de la raíz.
+
+    Salvaguarda la filosofía del proyecto: toda configuración de desarrollo,
+    archivos .yml y dependencias se alojan canónicamente en .dev, manteniendo
+    la compatibilidad de ejecución con GitHub Actions en la raíz.
+    """
+    DEV_GITHUB_WORKFLOWS_DIR.mkdir(parents=True, exist_ok=True)
+    REPO_GITHUB_WORKFLOWS_DIR.mkdir(parents=True, exist_ok=True)
+
+    resultado: Dict[str, Any] = {
+        "canonicos": [],
+        "sincronizados": [],
+        "errores": [],
+    }
+
+    # 1. Absorber cualquier workflow nuevo de la raíz hacia .dev/.github
+    if REPO_GITHUB_WORKFLOWS_DIR.is_dir():
+        for ruta_raiz in REPO_GITHUB_WORKFLOWS_DIR.glob("*.yml"):
+            destino_dev = DEV_GITHUB_WORKFLOWS_DIR / ruta_raiz.name
+            if not destino_dev.exists() or ruta_raiz.stat().st_mtime > destino_dev.stat().st_mtime:
+                try:
+                    shutil.copy2(ruta_raiz, destino_dev)
+                    resultado["canonicos"].append(destino_dev.name)
+                except Exception as err:
+                    resultado["errores"].append(f"Error al absorber {ruta_raiz.name} hacia .dev: {err}")
+
+    # 2. Sincronizar desde la fuente canónica (.dev/.github) hacia la raíz
+    for ruta_dev in DEV_GITHUB_WORKFLOWS_DIR.glob("*.yml"):
+        destino_raiz = REPO_GITHUB_WORKFLOWS_DIR / ruta_dev.name
+        try:
+            if not destino_raiz.exists() or ruta_dev.stat().st_mtime > destino_raiz.stat().st_mtime:
+                shutil.copy2(ruta_dev, destino_raiz)
+                resultado["sincronizados"].append(ruta_dev.name)
+            else:
+                resultado["canonicos"].append(ruta_dev.name)
+        except Exception as err:
+            resultado["errores"].append(f"Error al sincronizar {ruta_dev.name} hacia raíz: {err}")
+
+    # Deduplicar
+    resultado["canonicos"] = sorted(list(set(resultado["canonicos"])))
+    resultado["sincronizados"] = sorted(list(set(resultado["sincronizados"])))
+    return resultado
+
+
+def buscar_archivos_dev_desperdigados() -> List[Dict[str, str]]:
+    """Detecta archivos .yml, configuraciones o artefactos de desarrollo fuera de .dev."""
+    desperdigados = []
+    patrones_sospechosos = ["*.yml", "*.yaml", "pytest.ini", "tox.ini", ".ruff.toml"]
+
+    dirs_a_revisar = [
+        REPO_ROOT / "VersionDesesion" / "CONTRRF" / "RFC" / "CONTRUCCION" / "TLLDCD" / "src",
+        REPO_ROOT / "VersionDesesion" / "CONTRRF" / "RFC" / "CONTRUCCION" / "STM_RFC",
+    ]
+    for d in dirs_a_revisar:
+        if not d.is_dir():
+            continue
+        for patron in patrones_sospechosos:
+            for arch in d.rglob(patron):
+                rel = str(arch.relative_to(REPO_ROOT))
+                desperdigados.append({
+                    "archivo": rel,
+                    "tipo": patron,
+                    "sugerencia": "Reubicar en .dev o gestionar desde gestor_entorno.py",
+                })
+    return desperdigados
 
 
 def actualizar_vscode_config() -> Path:

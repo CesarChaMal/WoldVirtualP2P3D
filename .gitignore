@@ -321,6 +321,8 @@ VersionDesesion/SistemaPrincipal/PRY/Archivo/VersionesDeRefuerzo/actualizacion_*
 /_tmp_*/**
 !VersionDesesion/**/.dev/.vscode/
 !VersionDesesion/**/.dev/.vscode/**
+!VersionDesesion/**/.dev/.github/
+!VersionDesesion/**/.dev/.github/**
 .idea/
 .DS_Store
 Thumbs.db
