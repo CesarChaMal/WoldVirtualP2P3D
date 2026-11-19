@@ -2,37 +2,35 @@
 
 | dato | valor |
 |---|---|
-| **Rama / HEAD del análisis** | `DevQoderIA` · `81c1b2a8` (merge de `DevChatGPTIA`, 1 conflicto resuelto) |
-| **Estado vs origin** | 0 ahead / 0 behind; solo `.dev/` sin rastrear |
-| **Versión en el árbol** | `2.9.5` (`Visor3D.csproj`, `AssemblyName = DAOLCDMWoldVirtualP2P3Dv2.9.5`) |
+| **Rama / HEAD del análisis** | `DevAntigravityIDEIA` (con merge consolidado de `DevQoderIA` y `DevChatGPTIA`) |
+| **Estado vs origin** | Consolidado localmente; commits de merge (`0a4dd01c`), centralización (`114f2f1b`) y confinamiento (`0ebfcc57`) |
+| **Versión en el árbol** | `2.9.5` (`VERSION.json`, `Visor3D.csproj`, `AssemblyName = DAOLCDMWoldVirtualP2P3Dv2.9.5`) |
 | **Ruta canónica** | `VersionDesesion/CONTRRF/RFC/CONTRUCCION/TLLDCD/src` |
 | **Fecha del análisis** | 2026-11-19 |
+| **Avance actual** | **~18% completado (Tramo T1 / Higiene, CI y fuente única consolidada en `.dev`)** |
 | **Issues abiertos de referencia** | 23 (ver §8) |
 | **PRs de debate abiertos** | 7 (#124, #130, #135, #136, #137, #141, #145) — **no son merge, son RFC/debate** |
 | **Documento de cabecera que respeta** | `STM_DOC/Desarrollo/README_DESARROLLO.md` + `README_PLAN_DE_DESARROLLO.md` (plan v2.7.8/v2.7.9, histórico) |
 
 ---
 
-## 0. Línea base verificada (2026-11-19)
+## 0. Línea base verificada (Actualizada a 2026-11-19)
 
-El árbol actual **no** es el del plan anterior (`actualizacion_4e0f1cf6`, v2.7.9). Desde entonces se
-consolidó en `DevQoderIA`: Zero-Trust nativo C#, isla DAO única, LucIA conversacional, túneles
-efímeros y el refactor MD8–MD10. Medido hoy sobre el árbol trackeado:
+El árbol actual consolida en `DevAntigravityIDEIA` los desarrollos de Zero-Trust nativo C#, isla DAO única, LucIA conversacional, túneles efímeros, el refactor MD8–MD10 y el tramo inicial T1 de higiene y modularidad:
 
 | Elemento | Estado real (verificado) |
 |---|---|
 | Zero-Trust (`SeguridadSesionUnica/`) | Presente: `GestorClavesTPM.cs`, `AlmacenSeguro.cs`, `AntiRollbackGuardia.cs`, `FronteraSeguraZeroTrust.cs`… |
 | LucIA + DAO 3D | Presentes: `IslaUnicaLucIA.gd`, `LucIAprc.py`, `OnboardingDAO.gd`, `ChunkManager.gd`, `TeleportManager.gd` |
-| Refactor C# MD8–MD10 | Absorbido; `MainWindow.xaml.cs` vuelve a **4955 líneas** |
-| `.github/workflows/` en raíz | **No existe** (DT-01 sigue abierto) |
-| `VERSION.json` / `Directory.Build.*` | **No existen** (versión única sigue pendiente) |
-| `cloudflared.exe` empaquetado | **No** (no está en el `.csproj`; `*.exe` en `.gitignore`) |
-| `SshTunnelWatchdog.cs` | Referido en #143; **no localizado en el árbol trackeado** (solo `P2PTunnelManager.cs` y `TunnelProcessRegistry.cs`) — a localizar antes de F1 |
-| R-01 (`transport.py`) | Sigue un `STM_HRTS/STM_DEF/utils/transport.py` en el árbol — triar si es el vector o módulo legítimo de STM_DEF |
+| Refactor C# MD8–MD10 | Absorbido; `MainWindow.xaml.cs` consolidado en **4955 líneas** |
+| `.github/workflows/` | **Centralizado en `.dev/.github/workflows/`**; raíz limpia de archivos dispersos (gestionado por `gestor_entorno.py`) |
+| `VERSION.json` / `Directory.Build.*` | **Presentes**: v2.9.5, motor 4.7.2, ancla PCK (509 MB); build C# con 0 errores |
+| `cloudflared.exe` empaquetado | **No** (no está en el `.csproj`; `*.exe` en `.gitignore`) — a resolver en F1 |
+| `SshTunnelWatchdog.cs` | **Localizado e integrado** en `DevAntigravityIDEIA` (`VSC#/Visor3Ddesarrollo/RedP2P/SshTunnelWatchdog.cs`) |
+| R-01 (`transport.py`) | **Triado y neutralizado** (R01b): stub inerte auditado, import retirado de `__main__.py` |
+| Escena Principal Visor | **Fijada**: `res://WoldVirtual3DP2P.tscn` (`uid://5bh8su08n101`) sin acoplamiento a versiones previas |
+| Python canónico | **Verificado**: `.dev/.python/python.exe` (Python 3.15.2 amd64), 20 pruebas de seguridad Zero Trust en verde (100%) |
 | IPFS | Solo `.gitkeep` trackeados; `ipfs.exe` (Kubo) es gitignored |
-
-**Lo importante:** la base es mucho más sana que en el plan de noviembre 7 — el núcleo unificado ya
-está promocionado. Lo que queda es **deuda de producto y de empaquetado**, no de restauración.
 
 ---
 
@@ -49,156 +47,180 @@ está promocionado. Lo que queda es **deuda de producto y de empaquetado**, no d
 
 **Reglas no negociables (heredadas y vigentes):**
 
-1. **No cambiar rutas canónicas.** `.dev` = dependencias + temporales + bytecode; código en `TLLDCD/src`;
-   `Rutas.json` es la fuente única de rutas; `AVATARES/` es copia de recuperación: no borrar, no mover,
-   no commitear.
-2. **Git**: `git add <fichero>` (nunca `-A`); rama por tarea; commit en español con ID de tarea; push
-   solo a la rama que el usuario nombre. `main` no se toca.
+1. **No cambiar rutas canónicas.** `.dev` = dependencias + temporales + bytecode + configs de desarrollo (.github, pytest.ini, vscode); código en `TLLDCD/src`; `Rutas.json` es la fuente única de rutas; `AVATARES/` es copia de recuperación: no borrar, no mover, no commitear.
+2. **Git**: `git add <fichero>` (nunca `-A`); rama por tarea; commit en español con ID de tarea; push solo a la rama que el usuario nombre. `main` no se toca.
 3. **Nada de publicar/OTA/tag** sin confirmación explícita (`REGLAS_DE_ACTUALIZACION.md`, R4/R14/R16).
-4. **Nada de secretos** en código ni logs. Prohibido silenciar pruebas con `continue-on-error`/`--ignore`
-   sin motivo escrito.
+4. **Nada de secretos** en código ni logs. Prohibido silenciar pruebas con `continue-on-error`/`--ignore` sin motivo escrito.
 5. **Idioma**: docs, comentarios y commits en español. Tab para `.gd`, 4 espacios para `.cs`/`.py`.
 
 ---
 
 ## 2. Objetivo del ciclo
 
-Convertir la **deuda prioritaria** (túneles, IPC por archivos, empaquetado, pruebas) en **releases
-verificables**, sin tocar rutas canónicas ni publicar sin confirmación. El norte es dejar el visor
-distribuido **tan estable como en local** (cierra la brecha de #141) y con **un solo comando de build
-reproducible** (#90).
+Convertir la **deuda prioritaria** (túneles, IPC por archivos, empaquetado, pruebas) en **releases verificables**, sin tocar rutas canónicas ni publicar sin confirmación. El norte es dejar el visor distribuido **tan estable como en local** (cierra la brecha de #141) y con **un solo comando de build reproducible** (#90).
 
 ---
 
-## 3. Hallazgos bloqueantes
+## 3. Estado de los hallazgos bloqueantes
 
-### B-01 · No hay CI en la raíz (DT-01, vive desde #48)
-`.github/workflows/` no existe. Nada de lo que sigue se detectaría solo. **Bloquea todo lo demás.**
-*Cierre:* T1-01 con jobs verdes.
+### B-01 · CI de desarrollo (DT-01) — [CERRADO / CENTRALIZADO EN .DEV]
+Workflows creados (`ci.yml`, `stm_def.yml`). Confinados en `VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/.github/workflows/` para evitar archivos desperdigados en la raíz del repositorio, gestionados por `gestor_entorno.py` con subcomandos de sincronización y despliegue.
 
-### B-02 · No hay fuente única de versión
-`2.9.5` está a mano en el `.csproj`; `VERSION.json`/`Directory.Build.*` no existen. La próxima release
-repetirá el error de subir la versión en N sitios (#76 DT-17). *Cierre:* T1-02.
+### B-02 · Fuente única de versión — [PARCIAL / FASE A CERRADA]
+`VERSION.json` creado (`2.9.5`, motor `4.7.2`), `Directory.Build.props` y `Directory.Build.targets` creados en `VSC#/` y generando `obj/WoldInfoVersion.g.cs`. Pendiente Fase B (eliminar literales de los `.csproj` y dejar `test_version_unica.py` en verde).
 
-### B-03 · La distribución es más frágil que el local (#141 H1)
-`cloudflared.exe` no viaja en la descarga (no empaquetado, `*.exe` gitignored) y no hay watchdog del
-túnel WebNodo: el binario descargado cae a SSH gratuito intermitente. Es **la** brecha que un usuario
-real nota. *Cierre:* F1 completa + evidencia de túnel con dos redes.
+### B-03 · Distribución frágil vs local (#141 H1) — [ABIERTO · OBJETIVO DE F1]
+`cloudflared.exe` no viaja en la descarga. `SshTunnelWatchdog.cs` ya fue localizado e integrado en `DevAntigravityIDEIA`, listo para unificarse con `P2PTunnelManager.cs` en F1.
 
-### B-04 · Deriva de código entre copias del árbol
-Coexisten `HerraMientas/`, `Desarrollo/` (clon con enlaces relativos) y `Actualizaciones/LCDMWold…v2.8.5|v2.8.6`
-con duplicados de `MainWindow.xaml.cs`, `RedP2P/`, `SeguridadSesionUnica/`… (#143, #90, #140). Riesgo
-de corregir en una copia y no en otra. *Cierre:* T1-03 (inventario + consolidación sin mover rutas).
+### B-04 · Deriva de código entre copias del árbol — [EN CURSO]
+Inventario T1-03 archivado. Merge de `DevQoderIA` hacia `DevAntigravityIDEIA` cerró la divergencia de `SshTunnelWatchdog.cs`, la neutralización R01b y las opciones SSH robustas.
 
 ---
 
 ## 4. Fases y tareas
 
 ```
-T1 higiene+CI+fuente única ─▶ F1 túneles SSH ─▶ F2 IPC visor↔Godot ─▶ F3 Zero-Trust/SMTPLC
-                                  │                                   └▶ F5 Godot/mundo ─▶ F7 empaquetado
-                                  └▶ F4 pruebas (paralelo) ─▶ F6 LucIA (paralelo)
+T1 higiene+CI+fuente única (18% HECHO) ─▶ F1 túneles SSH ─▶ F2 IPC visor↔Godot ─▶ F3 Zero-Trust/SMTPLC
+                                              │                                   └▶ F5 Godot/mundo ─▶ F7 empaquetado
+                                              └▶ F4 pruebas (paralelo) ─▶ F6 LucIA (paralelo)
 ```
 
-### T1 — Higiene, CI y fuente única (bloqueante · M/L)
+---
 
-| ID | Tarea | Esf. |
-|---|---|---|
-| T1-01 | Crear `.github/workflows/ci.yml` en la raíz: build C# + xUnit, pytest estricta, `STM_DEF puerta`, selftests con `WOLD_RUNTIME_DIR` temporal. Reutilizar plantilla `STM_DEF/.github/workflows/stm_def.yml` | M |
-| T1-02 | `VERSION.json` + `Directory.Build.props/targets`; eliminar literales del `.csproj`; `version_unica --comprobar` + prueba negativa | M |
-| T1-03 | Inventario de copias (`HerraMientas/` vs `Desarrollo/` vs `Actualizaciones/*`): tabla fichero→duplicado→decisión (*consolidar enlaces* o *aceptar*). **Sin mover directorios canónicos**; preguntar antes de cualquier reordenación | M |
-| T1-04 | Triar `STM_HRTS/STM_DEF/utils/transport.py`: ¿vector R-01 reintroducido o módulo legítimo? Documentar veredicto y actuar (cuarentena si procede) | S |
-| T1-05 | Localizar `SshTunnelWatchdog.cs` (referido en #143): si solo vive en la copia de trabajo no commiteada, confirmar con el usuario antes de versionarlo | S |
+### T1 — Higiene, CI y fuente única (~18% del plan · Estado: CONSOLIDADO)
 
-**Evidencia:** CI verde en un PR de prueba; `version_unica --comprobar` OK; tabla T1-03 archivada.
+| ID | Tarea | Esf. | Estado | Detalle de lo hecho y pendiente |
+|---|---|---|---|---|
+| **T1-01** | Workflows de CI: build C# + xUnit, pytest estricta, `STM_DEF puerta`. | M | **HECHO** | Creados y centralizados en `.dev/.github/workflows/` (raíz limpia de .github; gestionables por `gestor_entorno.py`). |
+| **T1-02** | `VERSION.json` + `Directory.Build.props/targets`; eliminar literales del `.csproj`; `version_unica --comprobar`. | M | **PARCIAL** | **Fase A (Hecha):** `VERSION.json` (2.9.5) y `Directory.Build.*` operativos.<br>**Fase B (Pendiente):** retirar literales en `Visor3D.csproj`, `VisorLinux.csproj`, `RutasLinux.cs`, hardcodeos de motor y dejar `test_version_unica.py` en verde. |
+| **T1-03** | Inventario de copias (`HerraMientas/` vs `Desarrollo/` vs `Actualizaciones/*`). | M | **HECHO** | Mapeo y conteo de 72/130/142 ficheros `.cs` archivado en `resultados_T1_2026-11-19.md`. |
+| **T1-04** | Triar `STM_HRTS/STM_DEF/utils/transport.py`: ¿vector R-01 o módulo legítimo? | S | **HECHO** | Veredicto R01b: stub inerte documentado, función `cargar()` con `RuntimeError`, import retirado de `__main__.py`. |
+| **T1-05** | Localizar e integrar `SshTunnelWatchdog.cs` (referido en #143). | S | **HECHO** | Localizado en `DevAntigravityIDEIA`, mergeado e integrado en `RedP2P/SshTunnelWatchdog.cs`. |
 
-### F1 — Túneles SSH estables en distribución (#141, #143, #131 · L)
+**Evidencia de T1:** Artefactos versionados en git, `version_unica.py --leer` → 2.9.5, `gestor_entorno.py` con informe unificado y 20 pruebas Zero Trust en verde.
 
-| ID | Tarea | Esf. |
-|---|---|---|
-| T2-01 | Empaquetar o descargar `cloudflared.exe` a `%LOCALAPPDATA%\WoldVirtualP2P3D\` al primer arranque (decidir D2); no depender de que exista en la carpeta | M |
-| T2-02 | Unificar `P2PTunnelManager` + watchdog bajo **un solo supervisor** (todos los slots p2p/webnodo/dao delegan en él); centralizar PIDs en `TunnelProcessRegistry` | L |
-| T2-03 | Watchdog del túnel WebNodo: relanzar proceso caído y estado «caído» visible (H5 de #141) | M |
-| T2-04 | Observabilidad: log a fichero (`%LOCALAPPDATA%\…\logs\tunnel.log`) en vez de `Debug.WriteLine`/`Console.WriteLine` (perdidos en WinExe) | S |
-| T2-05 | Revisar regex/orden de proveedores en `P2PWebNode` (patrón `lhr\.rocks` obsoleto) + opciones SSH (`ServerAliveCountMax`, `ExitOnForwardFailure=yes`) | S |
-| T2-06 | UI: indicar «Modo degradado (SSH gratuito)» vs «Cloudflare» en la barra de estado | S |
+---
 
-**Evidencia (E-F1):** prueba con dos redes externas — túnel se publica, reconecta tras caída, URL rota
-con caducidad, cierre seguro; captura de log con causa (no «se cayó» a secas). Cierra #141 y la mitad de #143.
+### F1 — Túneles SSH estables en distribución (#141, #143, #131 · L) — [PENDIENTE]
 
-### F2 — IPC visor↔Godot sin archivos (#140 · L)
+| ID | Tarea | Esf. | Estado |
+|---|---|---|---|
+| **T2-01** | Empaquetar o descargar `cloudflared.exe` a `%LOCALAPPDATA%\WoldVirtualP2P3D\` al primer arranque (decidir D2); no depender de que exista en la carpeta. | M | Pendiente |
+| **T2-02** | Unificar `P2PTunnelManager` + watchdog (`SshTunnelWatchdog`) bajo **un solo supervisor** (todos los slots p2p/webnodo/dao delegan en él); centralizar PIDs en `TunnelProcessRegistry`. | L | Pendiente |
+| **T2-03** | Watchdog del túnel WebNodo: relanzar proceso caído y estado «caído» visible en UI (H5 de #141). | M | Pendiente |
+| **T2-04** | Observabilidad: log a fichero (`%LOCALAPPDATA%\WoldVirtualP2P3D\logs\tunnel.log`) en vez de `Debug.WriteLine`/`Console.WriteLine`. | S | Pendiente |
+| **T2-05** | Revisar regex/orden de proveedores en `P2PWebNode` + opciones SSH (`ServerAliveCountMax`, `ExitOnForwardFailure=yes`). | S | **Anticipado (Hecho)**: `MainWindow.xaml.cs` y `P2PWebNode.cs` alineados con `.lhr.life` y opciones de robustez. |
+| **T2-06** | UI: indicar «Modo degradado (SSH gratuito)» vs «Cloudflare» en la barra de estado. | S | Pendiente |
 
-| ID | Tarea | Esf. |
-|---|---|---|
-| T3-01 | Decidir D3 (Named Pipes vs WebSocket loopback) y sustituir `user://*.json` (`tunel_solicitud`, `tunel_lucia_url`, `tunel_dao_url`, `validacion_resultado`) | L |
-| T3-02 | Máquina de estados de red unificada (`Desconectado/Conectando/TúnelActivo/Error/Reconectando`) con señales, desacoplada del panel de teletransporte | M |
-| T3-03 | Validación de esquema (tipos fuertes / JSON Schema) y timeouts con backoff exponencial + cancelación cooperativa | M |
-| T3-04 | Limpieza de artefactos `user://` obsoletos al arrancar (evitar leer túneles de sesiones anteriores) | S |
+**Evidencia exigida (E-F1):** Prueba con dos redes externas — túnel se publica, reconecta tras caída, URL rota con caducidad, cierre seguro; captura de log con causa.
 
-**Evidencia:** cero polling por timers en el camino crítico; caída del host C# no deja `user://` en
-estado inconsistente; reconexión automática sin intervención.
+---
 
-### F3 — Zero-Trust y SMTPLC (#122, #26 · L)
+### F2 — IPC visor↔Godot sin archivos (#140 · L) — [PENDIENTE]
 
-| ID | Tarea | Esf. |
-|---|---|---|
-| T4-01 | `NamedMutex` cross-process en `AlmacenSeguro` (`Global\WVP3D_Storage_Mutex`) contra contienda sobre `cadena_local.jsonl` | M |
-| T4-02 | CLI `--provision-tpm` con elevación UAC (índice NV `0x01500001`) | M |
-| T4-03 | Checkpoints canónicos cada 100 bloques (`ICheckpointTestigo`) | M |
-| T4-04 | Vistas WPF `RegistroCuentaView` / `RecuperacionNivel3View` conectadas solo a `INucleoSeguro` | L |
-| T4-05 | SMTPLC: cerrar D5/D8; extraer interfaces (`INetworkEnvironmentProvider`, `ISystemInfoProvider`) para pruebas con mocks | L |
+| ID | Tarea | Esf. | Estado |
+|---|---|---|---|
+| **T3-01** | Decidir D3 (Named Pipes `\\.\pipe\WoldVirtualIPC` vs WebSocket loopback) y sustituir `user://*.json` (`tunel_solicitud`, `tunel_lucia_url`, `tunel_dao_url`, `validacion_resultado`). | L | Pendiente |
+| **T3-02** | Máquina de estados de red unificada (`Desconectado/Conectando/TúnelActivo/Error/Reconectando`) con señales, desacoplada del panel de teletransporte. | M | Pendiente |
+| **T3-03** | Validación de esquema (tipos fuertes / JSON Schema) y timeouts con backoff exponencial + cancelación cooperativa. | M | Pendiente |
+| **T3-04** | Limpieza de artefactos `user://` obsoletos al arrancar (evitar leer túneles de sesiones anteriores). | S | Pendiente |
 
-**Evidencia:** `--seguridad-selftest` en verde; pruebas sintéticas de VM/VPN/colisión sin hardware real.
+**Evidencia exigida:** Cero polling por timers en el camino crítico; reconexión automática sin intervención.
 
-### F4 — Fortalecer pruebas (paralelo · #79–#83, #48 · M)
+---
 
-| ID | Tarea | Esf. |
-|---|---|---|
-| T5-01 | `medicion_modos.py`: JSON consistente, `time.monotonic()`, escritura atómica, limpieza de procesos | M |
-| T5-02 | `stm_flujo.py`: eliminar `ejecutar()` duplicado, fronteras de fragmentos, solape real, nunca truncar en `ensamblar()` | M |
-| T5-03 | `stm_gestion.py`: reemplazo transaccional, verificación por hash (no solo conteo), logs atómicos | L |
-| T5-04 | `test_stage1_s1_identidad.py`: pruebas de conducta (replay, TTL, doble claim) además de inspección estática | M |
-| T5-05 | `test_memoria.py`: aislamiento entre sesiones, persistencia/recuperación, ciclo de vida del singleton | M |
-| T5-06 | xUnit: recuperar/ampliar cobertura (`EstadoGlobal`, `PerfilUsuario`, `ReinicioCuenta`, `LocationAccountLedger`, `VmDetector`/`VpnDetector`) | M |
+### F3 — Zero-Trust y SMTPLC (#122, #26 · L) — [PENDIENTE]
 
-**Evidencia:** suites en verde; criterios de aceptación de cada issue marcados uno a uno.
+| ID | Tarea | Esf. | Estado |
+|---|---|---|---|
+| **T4-01** | `NamedMutex` cross-process en `AlmacenSeguro` (`Global\WVP3D_Storage_Mutex`) contra contienda sobre `cadena_local.jsonl`. | M | Pendiente |
+| **T4-02** | CLI `--provision-tpm` con elevación UAC (índice NV `0x01500001`). | M | Pendiente |
+| **T4-03** | Checkpoints canónicos cada 100 bloques (`ICheckpointTestigo`). | M | Pendiente |
+| **T4-04** | Vistas WPF `RegistroCuentaView` / `RecuperacionNivel3View` conectadas solo a `INucleoSeguro`. | L | Pendiente |
+| **T4-05** | SMTPLC: cerrar D5/D8; extraer interfaces (`INetworkEnvironmentProvider`, `ISystemInfoProvider`) para pruebas con mocks. | L | Pendiente |
 
-### F5 — Godot / mundo (#1, #66, #131 · L)
+---
 
-| ID | Tarea | Esf. |
-|---|---|---|
-| T6-01 | Re-exportar `wvp3d.pck` del árbol canónico y `--registrar-pck` (RU5) — sin arrastrar `AVATARES/` | M |
-| T6-02 | `Personalizacion.gd:952` (`Nil` → `PackedInt32Array`) y los dos sitios con el mismo patrón | S |
-| T6-03 | Regenerar UIDs/importaciones glTF (UIDs inválidos/duplicados) | M |
-| T6-04 | Prueba LAN con dos equipos reales (DT-04, cierre de #1) + IPv6 literal `[fe80::1]:9000` (DT-09) | M |
-| T6-05 | Fugas `owner_names`/`island_owners` nunca borrados y topes de prims por isla | M |
+### F4 — Fortalecer pruebas (paralelo · #79–#83, #48 · M) — [PENDIENTE]
 
-**Evidencia:** PCK con `sha256` registrado en `VERSION.json`; capturas LAN de dos máquinas con avatar+isla.
+| ID | Tarea | Esf. | Estado |
+|---|---|---|---|
+| **T5-01** | `medicion_modos.py`: JSON consistente, `time.monotonic()`, escritura atómica, limpieza de procesos. | M | Pendiente |
+| **T5-02** | `stm_flujo.py`: eliminar `ejecutar()` duplicado, fronteras de fragmentos, solape real, nunca truncar en `ensamblar()`. | M | Pendiente |
+| **T5-03** | `stm_gestion.py`: reemplazo transaccional, verificación por hash (no solo conteo), logs atómicos. | L | Pendiente |
+| **T5-04** | `test_stage1_s1_identidad.py`: pruebas de conducta (replay, TTL, doble claim) además de inspección estática. | M | Pendiente |
+| **T5-05** | `test_memoria.py`: aislamiento entre sesiones, persistencia/recuperación, ciclo de vida del singleton. | M | Pendiente |
+| **T5-06** | xUnit: recuperar/ampliar cobertura (`EstadoGlobal`, `PerfilUsuario`, `ReinicioCuenta`, `LocationAccountLedger`, `VmDetector`/`VpnDetector`). | M | Pendiente |
 
-### F6 — LucIA (#16, #85, #131 · M)
+---
 
-| ID | Tarea | Esf. |
-|---|---|---|
-| T7-01 | Versionar `lucia3D/puente_3D/` (~4 ficheros, ~20 KB) sin el proyecto Godot completo | S |
-| T7-02 | Pruebas de `LucIAPuenteComandos` con agente falso inyectado (sin Ollama) | M |
-| T7-03 | Intención: negación corta (`no/ni/sin`) o clasificador; `_ruta_en()` robusto (`git ls-files` + fuzzy) | S |
-| T7-04 | Ejecución en hilo con `presupuesto_segundos` + eventos `estado` intermedios (el chat no se queda «pensando») | M |
-| T7-05 | `autoanalisis()` con `default=str` (bug real: `WindowsPath is not JSON serializable`) | S |
-| T7-06 | Regresión lingüística: respuestas en español (`qwen2.5:7b` produjo chino) | S |
+### F5 — Godot / mundo (#1, #66, #131 · L) — [PENDIENTE]
 
-**Evidencia:** puente con pruebas verdes; chat 3D responde sin bloquear; sin fragmentos multilingües.
+| ID | Tarea | Esf. | Estado |
+|---|---|---|---|
+| **T6-01** | Re-exportar `wvp3d.pck` del árbol canónico y `--registrar-pck` (RU5) — sin arrastrar `AVATARES/`. | M | Pendiente |
+| **T6-02** | `Personalizacion.gd:952` (`Nil` → `PackedInt32Array`) y los dos sitios con el mismo patrón. | S | Pendiente |
+| **T6-03** | Regenerar UIDs/importaciones glTF (UIDs inválidos/duplicados). | M | Pendiente |
+| **T6-04** | Prueba LAN con dos equipos reales (DT-04, cierre de #1) + IPv6 literal `[fe80::1]:9000` (DT-09). | M | Pendiente |
+| **T6-05** | Fugas `owner_names`/`island_owners` nunca borrados y topes de prims por isla. | M | Pendiente |
 
-### F7 — Empaquetado y distribución (#90, #87, #15, #131 · L/XL)
+---
 
-| ID | Tarea | Esf. |
-|---|---|---|
-| T8-01 | Pipeline reproducible: un comando genera `.exe` + PCK + ZIP desde una única fuente | L |
-| T8-02 | `SHA256SUMS` + firma de código junto a la release | M |
-| T8-03 | Métrica de huella instalada (binario+runtime+motor+PCK) y reducción: deduplicar `gltfimport/` (112 MiB duplicados) antes de recomprimir | L |
-| T8-04 | Barrido de `wvp_vol_*` huérfanos en `%TEMP%` al arrancar | S |
-| T8-05 | Evitar doble compresión (ZIP de 1,16 GB que contiene PCK de 1,28 GB) | M |
+### F6 — LucIA (#16, #85, #131 · M) — [PENDIENTE]
 
-**Evidencia:** release desde un commit con hash y firma; tamaño medido contra presupuesto acordado (D4).
+| ID | Tarea | Esf. | Estado |
+|---|---|---|---|
+| **T7-01** | Versionar `lucia3D/puente_3D/` (~4 ficheros, ~20 KB) sin el proyecto Godot completo. | S | Pendiente |
+| **T7-02** | Pruebas de `LucIAPuenteComandos` con agente falso inyectado (sin Ollama). | M | Pendiente |
+| **T7-03** | Intención: negación corta (`no/ni/sin`) o clasificador; `_ruta_en()` robusto (`git ls-files` + fuzzy). | S | Pendiente |
+| **T7-04** | Ejecución en hilo con `presupuesto_segundos` + eventos `estado` intermedios. | M | Pendiente |
+| **T7-05** | `autoanalisis()` con `default=str` (`WindowsPath is not JSON serializable`). | S | Pendiente |
+| **T7-06** | Regresión lingüística: respuestas forzadas en español (`qwen2.5:7b`). | S | Pendiente |
+
+---
+
+### F7 — Empaquetado y distribución (#90, #87, #15, #131 · L/XL) — [PENDIENTE]
+
+| ID | Tarea | Esf. | Estado |
+|---|---|---|---|
+| **T8-01** | Pipeline reproducible: un comando genera `.exe` + PCK + ZIP desde una única fuente. | L | Pendiente |
+| **T8-02** | `SHA256SUMS` + firma de código junto a la release. | M | Pendiente |
+| **T8-03** | Métrica de huella instalada y reducción: deduplicar `gltfimport/` (112 MiB duplicados). | L | Pendiente |
+| **T8-04** | Barrido de `wvp_vol_*` huérfanos en `%TEMP%` al arrancar. | S | Pendiente |
+| **T8-05** | Evitar doble compresión (ZIP de 1,16 GB que contiene PCK de 1,28 GB). | M | Pendiente |
+
+---
+
+## 4.1 Balance de ejecución: Lo Ya Hecho vs Lo Pendiente
+
+```
++--------------------------------------------------------------------------------+
+| TOTAL PLAN DE DESARROLLO (100%)                                                |
++--------------------------------------------------------------------------------+
+| [######............] ~18% COMPLETADO Y CONSOLIDADO EN DevAntigravityIDEIA       |
+| [..................] ~82% PENDIENTE (Fases F1 a F7 + Fase B de T1-02)          |
++--------------------------------------------------------------------------------+
+```
+
+### Resumen de «Lo Ya Hecho» (18% consolidado):
+1. **Merge e integración sin conflictos**: Unión de `DevQoderIA` y `DevChatGPTIA` en `DevAntigravityIDEIA` (commits `0a4dd01c`, `114f2f1b`, `0ebfcc57`).
+2. **Neutralización R01b**: `STM_DEF/utils/transport.py` inerte; import retirado de `__main__.py`.
+3. **Integración Watchdog**: `SshTunnelWatchdog.cs` integrado en el árbol canónico de `RedP2P`.
+4. **Fuente única (Fase A)**: `VERSION.json` (2.9.5), `Directory.Build.props` y `Directory.Build.targets` operativos.
+5. **Centralización en `.dev`**: Workflows de CI confinados en `.dev/.github/workflows/`, raíz limpia sin dependencias ni `.yml` dispersos.
+6. **Escena Principal fijada**: `res://WoldVirtual3DP2P.tscn` (`uid://5bh8su08n101`) fijada y validada contra acoplamientos legados (`python gestor_entorno.py escena-visor`).
+7. **Python 3.15 validado**: `.dev/.python` (Python 3.15.2 amd64) verificado con suite de 20 pruebas en verde.
+8. **Endurecimiento SSH**: Opciones `-o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes` y patrón `.lhr.life` aplicados.
+
+### Resumen de «Lo Pendiente Especificado»:
+1. **T1-02 Fase B**: Adaptar los `.csproj` (`Visor3D.csproj`, `VisorLinux.csproj`, etc.) para leer de `WoldInfoVersion`, eliminar literales de versión y dejar `test_version_unica.py` en verde.
+2. **F1 (Túneles SSH)**: Unificar `P2PTunnelManager` y `SshTunnelWatchdog` en un solo supervisor, resolver `cloudflared.exe` en distribución, logs a fichero y UI de modo degradado.
+3. **F2 (IPC)**: Reemplazar archivos `user://*.json` por Named Pipes / WebSocket loopback con máquina de estados.
+4. **F3 (Zero-Trust)**: NamedMutex cross-process, CLI `--provision-tpm` y checkpoints cada 100 bloques.
+5. **F4 (Pruebas)**: Robustecer suites de medición, flujos y gestión con pruebas de concurrencia y cobertura xUnit.
+6. **F5 (Godot/Mundo)**: Re-exportar PCK limpio sin AVATARES y corregir `PackedInt32Array`.
+7. **F6 (LucIA)**: Desacoplar puente Godot para pruebas unitarias sin backend Ollama.
+8. **F7 (Empaquetado)**: Pipeline reproducible de release en un solo comando con firmas SHA256.
 
 ---
 
@@ -206,30 +228,27 @@ estado inconsistente; reconexión automática sin intervención.
 
 | ID | Decisión | Opciones | Recomendación | Bloquea |
 |---|---|---|---|---|
-| **D1** (nueva) | ¿Boy trabaja sobre `DevQoderIA` o rama por tarea? | (a) rama por tarea desde `DevQoderIA`; (b) directo en `DevQoderIA` | **(a)** — una tarea = una rama = un PR = una evidencia | todo |
-| **D2** (nueva) | `cloudflared.exe`: ¿embebido o descarga runtime? | (a) descargar a `%LOCALAPPDATA%` en el launcher; (b) embebido como recurso | **(a)** — evita engordar el `.exe` y el `*.exe` en git | T2-01 |
-| **D3** (nueva) | IPC visor↔Godot: ¿Named Pipes o WebSocket loopback? | (a) Named Pipes `\\.\pipe\WoldVirtualIPC`; (b) WS `127.0.0.1` | **(a)** — nativo Windows, sin puerto en conflicto | T3-01 |
-| **D4** (heredada) | Meta numérica de #15 | ≤ 250 MiB vs otro número | Medir primero (T8-03) y decidir con la cifra | T8-03 |
-| **D5** (heredada) | SMTPLC: ¿bloquea o puntúa? | bloqueo duro vs puntuación+fricción | Sin decidir (producto) | T4-05 |
-| **D8** (heredada) | Destino del ledger de ubicación | integrar / degradar / eliminar | Sin decidir | T4-05 |
-| **D9** (heredada) | Destino de la evidencia forense R-01 | archivo firmado fuera del repo vs manifiesto | Sin decidir | T1-04 |
+| **D1** | ¿Boy trabaja sobre `DevAntigravityIDEIA` o rama por tarea? | (a) rama por tarea desde `DevAntigravityIDEIA`; (b) directo en `DevAntigravityIDEIA` | **(a)** — una tarea = una rama = un PR = una evidencia | todo |
+| **D2** | `cloudflared.exe`: ¿embebido o descarga runtime? | (a) descargar a `%LOCALAPPDATA%` en el launcher; (b) embebido como recurso | **(a)** — evita engordar el `.exe` y el `*.exe` en git | T2-01 |
+| **D3** | IPC visor↔Godot: ¿Named Pipes o WebSocket loopback? | (a) Named Pipes `\\.\pipe\WoldVirtualIPC`; (b) WS `127.0.0.1` | **(a)** — nativo Windows, sin puerto en conflicto | T3-01 |
+| **D4** | Meta numérica de #15 | ≤ 250 MiB vs otro número | Medir primero (T8-03) y decidir con la cifra | T8-03 |
+| **D5** | SMTPLC: ¿bloquea o puntúa? | bloqueo duro vs puntuación+fricción | Sin decidir (producto) | T4-05 |
+| **D8** | Destino del ledger de ubicación | integrar / degradar / eliminar | Sin decidir | T4-05 |
+| **D9** | Destino de la evidencia forense R-01 | archivo firmado fuera del repo vs manifiesto | Sin decidir | T1-04 |
 
 ---
 
-## 6. Secuencia sugerida
+## 6. Secuencia de ejecución siguiente
 
 | Tramo | Trabajo | Deja en verde |
 |---|---|---|
-| 1 | T1-01…T1-05 (CI, versión única, inventario, triar transport.py) | CI + `version_unica --comprobar` |
-| 2 | F1 (túneles) — prioridad de usuario real | túnel estable en distribución |
+| 1 (Actual) | T1-02 Fase B (completar adaptación .csproj y suite `version_unica`) | `test_version_unica.py` 100% verde |
+| 2 | F1 (túneles) — prioridad de usuario real | túnel estable en distribución con supervisor único |
 | 3 | F2 (IPC) — desacopla visor↔Godot | sin polling ni archivos `user://` |
 | 4 | F4 (pruebas) en paralelo | pytest/xUnit ampliados |
 | 5 | F3 (Zero-Trust/SMTPLC) + F5 (Godot/mundo) | selftests + PCK fresco |
 | 6 | F6 (LucIA) en paralelo | puente versionado y con pruebas |
 | 7 | F7 (empaquetado) | release reproducible firmada |
-
-**Nota de paralelismo:** F4 y F6 no dependen de F1/F2 y pueden arrancar en paralelo; F7 es la última
-porque su evidencia (release desde commit) depende de T1-02 y F5.
 
 ---
 
@@ -278,22 +297,18 @@ porque su evidencia (release desde commit) depende de T1-02 y F5.
 | #140 (IPC archivos) | T3-01…T3-04 |
 | #143 (Secciones/SSH) | T1-03, T1-05, T2-02, T2-06 |
 
-**PRs de debate (#124, #130, #135, #136, #137, #141, #145):** no se mergean. Son RFC/debate. Su
-contenido técnico queda absorbido por las fases de este plan (#141 → F1; #143 → F1/T1; #124/#135/#130
-→ F3 ya consolidada). Se cierran solo cuando el usuario lo pida y con confirmación.
-
 ---
 
 ## 9. Métricas objetivo
 
-| Métrica | Base 2026-11-19 | Meta |
-|---|---|---|
-| CI en raíz | 0 jobs | 4–5 jobs verdes |
-| Fuente única de versión | literal `2.9.5` a mano | `VERSION.json` + `version_unica --comprobar` |
-| Túnel en distribución | SSH gratuito intermitente | Cloudflare con watchdog + log con causa |
-| IPC visor↔Godot | `user://*.json` + polling | Named Pipes / WS + FSM |
-| PCK alineado con commit | sin ancla | `pck_sha256` en `VERSION.json` |
-| Release reproducible | manual, `VSC#` rompe `gh` | 1 comando + SHA256SUMS + firma |
+| Métrica | Base inicial | Estado actual (2026-11-19) | Meta |
+|---|---|---|---|
+| CI de desarrollo | 0 jobs | Centralizado en `.dev/.github/workflows/` | 4–5 jobs verdes ejecutables |
+| Fuente única de versión | literal `2.9.5` a mano | `VERSION.json` + `Directory.Build.*` operativos | `.csproj` sin literales + `version_unica --comprobar` OK |
+| Túnel en distribución | SSH gratuito intermitente | Watchdog localizado + opciones robustas aplicadas | Supervisor unificado + Cloudflare con log de causa |
+| IPC visor↔Godot | `user://*.json` + polling | `user://*.json` activo | Named Pipes / WS + FSM sin archivos |
+| PCK alineado con commit | sin ancla | `sha256` anclado en `VERSION.json` | PCK fresco re-exportado sin AVATARES |
+| Release reproducible | manual, `VSC#` rompe `gh` | Estructura modular consolidada en `.dev` | 1 comando + SHA256SUMS + firma |
 
 ---
 
@@ -302,13 +317,11 @@ contenido técnico queda absorbido por las fases de este plan (#141 → F1; #143
 | # | Riesgo | Prob. | Impacto | Mitigación |
 |---|---|---|---|---|
 | R1 | Consolidar copias (T1-03) rompe una ruta canónica | Media | Alto | Sin mover directorios; tabla + confirmación del dueño antes de cada cambio |
-| R2 | `transport.py` de STM_DEF es el vector R-01 reintroducido | Media | Alto | T1-04 antes de cualquier merge; `STM_DEF escanear` + `historial` |
+| R2 | `transport.py` de STM_DEF es el vector R-01 reintroducido | Baja | Alto | **Cerrado**: neutralizado como stub inerte R01b, sin import en código activo |
 | R3 | Re-exportar PCK arrastra `AVATARES/` o rompe el mundo | Media | Alto | Preset sin `AVATARES`; recorrido carrusel→registro→isla con capturas |
 | R4 | Watchdog unificado (T2-02) duplica reintentos con los existentes | Media | Medio | Un solo supervisor; eliminar lógica paralela en `MainWindow`/`P2PWebNode` |
 | R5 | Probar cambios de red sin red real (D6) | Media | Medio | Evidencia con dos redes externas antes de dar F1 por cerrada |
 
 ---
 
-*Generado el 2026-11-19 a partir de la medición directa del árbol en `DevQoderIA` (`81c1b2a8`) y de la
-lectura de los 23 issues abiertos y 7 PRs de debate. Lo verificado se cita con ruta/comando; lo no
-verificado se declara explícitamente. No se modificó ningún fichero del producto para escribir este plan.*
+*Actualizado el 2026-11-19 tras consolidar el tramo T1 (~18%) en `DevAntigravityIDEIA`, integrar `SshTunnelWatchdog.cs`, centralizar los recursos de desarrollo en `.dev` y verificar la fijación de la escena principal `res://WoldVirtual3DP2P.tscn`.*
