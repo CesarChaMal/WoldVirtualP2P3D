@@ -17,23 +17,36 @@ from .rutas import (
     GODOT_PROJECT_FILE,
     GODOT_PROY_DIR,
     LANZAR_BAT,
+    REPO_ROOT,
     VISOR_BASE_DIR,
     VISOR_CSPROJ,
     VISOR_HERRAMIENTAS_DIR,
     VISOR_OUTPUT_DLL,
     VISOR_OUTPUT_EXE,
+    localizar_dotnet,
 )
 
 
 def comprobar_dotnet() -> Tuple[bool, str]:
-    """Comprueba si el comando 'dotnet' está disponible en el sistema."""
+    """Comprueba si dotnet está disponible (PATH o instalación habitual)."""
+    exe = localizar_dotnet()
+    if exe is None:
+        return False, "dotnet no encontrado en PATH ni en ubicaciones habituales"
     try:
-        res = subprocess.run(["dotnet", "--version"], capture_output=True, text=True, check=False)
+        # Se consulta fuera de .dev: su global.json fija SDK 8.0.400 y bloquea
+        # cualquier lectura de versión si esa revisión no está instalada.
+        res = subprocess.run(
+            [str(exe), "--version"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         if res.returncode == 0:
             return True, res.stdout.strip()
+        return False, (res.stdout or res.stderr).strip() or f"dotnet devolvió código {res.returncode}"
     except Exception as e:
         return False, str(e)
-    return False, "dotnet no encontrado en PATH"
 
 
 def estado_visor() -> Dict[str, Any]:
@@ -81,6 +94,8 @@ def reconstruir_visor(
     if not dotnet_ok:
         return False, f"El compilador dotnet no está disponible: {version}"
 
+    dotnet_exe = str(localizar_dotnet())
+
     env = os.environ.copy()
     env["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1"
     env["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1"
@@ -89,13 +104,13 @@ def reconstruir_visor(
 
     if limpiar:
         print("[Visor3D] Limpiando compilación previa...")
-        cmd_clean = ["dotnet", "clean", str(VISOR_CSPROJ), "-c", configuracion]
+        cmd_clean = [dotnet_exe, "clean", str(VISOR_CSPROJ), "-c", configuracion]
         subprocess.run(cmd_clean, cwd=str(VISOR_HERRAMIENTAS_DIR), env=env, capture_output=True)
 
     if publicar_single_file:
         print(f"[Visor3D] Publicando ejecutable único standalone (-c {configuracion})...")
         cmd = [
-            "dotnet",
+            dotnet_exe,
             "publish",
             str(VISOR_CSPROJ),
             "-c", configuracion,
@@ -107,7 +122,7 @@ def reconstruir_visor(
     else:
         print(f"[Visor3D] Compilando ensamblado del visor (-c {configuracion})...")
         cmd = [
-            "dotnet",
+            dotnet_exe,
             "build",
             str(VISOR_CSPROJ),
             "-c", configuracion,
@@ -144,7 +159,12 @@ def lanzar_visor(args: Optional[List[str]] = None) -> int:
     env = os.environ.copy()
     env["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1"
 
-    cmd = ["dotnet", "run", "--project", str(VISOR_CSPROJ), "-c", "Debug", "--"]
+    dotnet_exe = localizar_dotnet()
+    if dotnet_exe is None:
+        print("[Visor3D] dotnet no encontrado en PATH ni en ubicaciones habituales.")
+        return 1
+
+    cmd = [str(dotnet_exe), "run", "--project", str(VISOR_CSPROJ), "-c", "Debug", "--"]
     if args:
         cmd.extend(args)
 
