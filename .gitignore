@@ -297,8 +297,7 @@ VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/.python/
 VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/venv/
 VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/.pytest_cache/
 VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/.ruff_cache/
-**/.pytest_cache/
-**/.ruff_cache/
+# A de ir en .dev
 VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/.ipfs/
 VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/_backup_renombrado/
 VersionDesesion/CONTRRF/RFC/CONTRUCCION/.dev/_tmp_*/
