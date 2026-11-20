@@ -17,3 +17,4 @@ MENSAJE = "transport.py neutralizado: el cargador remoto fue retirado (R01b)."
 def cargar(*_args: object, **_kwargs: object) -> None:
     """Falla de forma explicita si alguien intenta reutilizar el cargador."""
     raise RuntimeError(MENSAJE)
+
